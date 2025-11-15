@@ -2,10 +2,14 @@
 
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
+import { useTheme } from '@/lib/ThemeContext'
+import { ThemeSelector } from '@/components/ThemeSelector'
+import { ThemeEffects } from '@/components/ThemeEffects'
 import toast, { Toaster } from 'react-hot-toast'
 
 export default function Home() {
   const router = useRouter()
+  const { currentTheme } = useTheme()
   const [name, setName] = useState('')
   const [roomCode, setRoomCode] = useState('')
   const [isCreating, setIsCreating] = useState(false)
@@ -30,7 +34,6 @@ export default function Home() {
       
       const data = await res.json()
       
-      // ✅ CHANGEMENT ICI : sessionStorage au lieu de localStorage
       sessionStorage.setItem('playerId', data.player.id)
       sessionStorage.setItem('playerName', data.player.name)
       sessionStorage.setItem('roomId', data.room.id)
@@ -74,7 +77,6 @@ export default function Home() {
       
       const data = await res.json()
       
-      // ✅ CHANGEMENT ICI : sessionStorage au lieu de localStorage
       sessionStorage.setItem('playerId', data.player.id)
       sessionStorage.setItem('playerName', data.player.name)
       sessionStorage.setItem('roomId', data.room.id)
@@ -89,86 +91,176 @@ export default function Home() {
   }
   
   return (
-    <div className="min-h-screen bg-gradient-to-br from-purple-500 via-pink-500 to-orange-500 flex items-center justify-center p-4">
-      <Toaster position="top-center" />
+    <>
+      <ThemeSelector />
+      <ThemeEffects />
       
-      <div className="bg-white rounded-3xl shadow-2xl p-8 md:p-12 max-w-md w-full">
-        <div className="text-center mb-8">
-          <div className="text-7xl mb-4">🎨📞</div>
-          <h1 className="text-5xl font-black mb-2 bg-gradient-to-r from-purple-600 to-pink-600 bg-clip-text text-transparent">
-            DrawPhone
-          </h1>
-          <p className="text-gray-600 text-lg">
-            The hilarious drawing & guessing game!
-          </p>
-        </div>
+      <div 
+        className="min-h-screen flex items-center justify-center p-4 transition-all duration-500"
+        style={{
+          background: `linear-gradient(to bottom right, ${currentTheme.colors.gradientFrom}, ${currentTheme.colors.gradientVia}, ${currentTheme.colors.gradientTo})`
+        }}
+      >
+        <Toaster position="top-center" />
         
-        <div className="mb-6">
-          <label className="block text-sm font-bold mb-2 text-gray-700">
-            Your Name
-          </label>
-          <input
-            type="text"
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            placeholder="Enter your name"
-            maxLength={20}
-            className="w-full px-4 py-3 border-2 border-gray-300 rounded-xl focus:border-purple-500 focus:outline-none text-lg"
-            onKeyDown={(e) => e.key === 'Enter' && createRoom()}
-          />
-        </div>
-        
-        <button
-          onClick={createRoom}
-          disabled={!name.trim() || isCreating}
-          className="w-full py-4 bg-gradient-to-r from-purple-500 to-pink-500 text-white font-bold rounded-xl hover:from-purple-600 hover:to-pink-600 disabled:opacity-50 disabled:cursor-not-allowed mb-4 text-lg shadow-lg transition transform hover:scale-105"
+        <div 
+          className="rounded-3xl shadow-2xl p-8 md:p-12 max-w-md w-full transition-all duration-500"
+          style={{ 
+            backgroundColor: currentTheme.colors.cardBg,
+            color: currentTheme.colors.text
+          }}
         >
-          {isCreating ? 'Creating...' : '🎨 Create Room'}
-        </button>
-        
-        <div className="relative my-6">
-          <div className="absolute inset-0 flex items-center">
-            <div className="w-full border-t border-gray-300"></div>
+          {/* Logo & Title */}
+          <div className="text-center mb-8">
+            <div className="text-7xl mb-4">🎨📞</div>
+            <h1 
+              className="text-5xl font-black mb-2"
+              style={{
+                background: `linear-gradient(to right, ${currentTheme.colors.primary}, ${currentTheme.colors.secondary})`,
+                WebkitBackgroundClip: 'text',
+                WebkitTextFillColor: 'transparent',
+                backgroundClip: 'text'
+              }}
+            >
+              DrawPhone
+            </h1>
+            <p className="text-lg opacity-80">
+              The hilarious drawing & guessing game!
+            </p>
           </div>
-          <div className="relative flex justify-center text-sm">
-            <span className="px-4 bg-white text-gray-500 font-medium">or join existing</span>
+          
+          {/* Name input */}
+          <div className="mb-6">
+            <label 
+              className="block text-sm font-bold mb-2"
+              style={{ color: currentTheme.colors.text }}
+            >
+              Your Name
+            </label>
+            <input
+              type="text"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder="Enter your name"
+              maxLength={20}
+              className="w-full px-4 py-3 border-2 rounded-xl focus:outline-none text-lg transition-all"
+              style={{
+                borderColor: currentTheme.colors.primary + '40',
+                backgroundColor: currentTheme.id === 'dark' || currentTheme.id === 'halloween' || currentTheme.id === 'matrix' 
+                  ? currentTheme.colors.background 
+                  : '#FFFFFF',
+                color: currentTheme.colors.text
+              }}
+              onFocus={(e) => e.target.style.borderColor = currentTheme.colors.primary}
+              onBlur={(e) => e.target.style.borderColor = currentTheme.colors.primary + '40'}
+              onKeyDown={(e) => e.key === 'Enter' && createRoom()}
+            />
           </div>
-        </div>
-        
-        <div className="mb-4">
-          <label className="block text-sm font-bold mb-2 text-gray-700">
-            Room Code
-          </label>
-          <input
-            type="text"
-            value={roomCode}
-            onChange={(e) => setRoomCode(e.target.value.toUpperCase())}
-            placeholder="ABCDEF"
-            maxLength={6}
-            className="w-full px-4 py-3 border-2 border-gray-300 rounded-xl focus:border-purple-500 focus:outline-none text-center text-2xl font-bold uppercase tracking-wider"
-            onKeyDown={(e) => e.key === 'Enter' && joinRoom()}
-          />
-        </div>
-        
-        <button
-          onClick={joinRoom}
-          disabled={!name.trim() || !roomCode.trim() || isJoining}
-          className="w-full py-4 bg-gray-800 text-white font-bold rounded-xl hover:bg-gray-900 disabled:opacity-50 disabled:cursor-not-allowed text-lg shadow-lg transition transform hover:scale-105"
-        >
-          {isJoining ? 'Joining...' : '🚪 Join Room'}
-        </button>
-        
-        <div className="mt-8 p-4 bg-purple-50 rounded-xl">
-          <h3 className="font-bold text-purple-900 mb-2">How to Play:</h3>
-          <ol className="text-sm text-purple-800 space-y-1 list-decimal list-inside">
-            <li>Someone writes a sentence</li>
-            <li>Next player draws it</li>
-            <li>Next player describes the drawing</li>
-            <li>Repeat until everyone&apos;s done!</li>
-            <li>See the hilarious results! 😂</li>
-          </ol>
+          
+          {/* Create room button */}
+          <button
+            onClick={createRoom}
+            disabled={!name.trim() || isCreating}
+            className={`w-full py-4 bg-gradient-to-r text-white font-bold rounded-xl disabled:opacity-50 disabled:cursor-not-allowed mb-4 text-lg shadow-lg transition transform hover:scale-105`}
+            style={{
+              background: !name.trim() || isCreating 
+                ? '#9CA3AF' 
+                : `linear-gradient(to right, ${currentTheme.colors.primary}, ${currentTheme.colors.secondary})`
+            }}
+          >
+            {isCreating ? 'Creating...' : '🎨 Create Room'}
+          </button>
+          
+          {/* Divider */}
+          <div className="relative my-6">
+            <div className="absolute inset-0 flex items-center">
+              <div 
+                className="w-full border-t"
+                style={{ borderColor: currentTheme.colors.text + '20' }}
+              ></div>
+            </div>
+            <div className="relative flex justify-center text-sm">
+              <span 
+                className="px-4 font-medium"
+                style={{ 
+                  backgroundColor: currentTheme.colors.cardBg,
+                  color: currentTheme.colors.text,
+                  opacity: 0.7
+                }}
+              >
+                or join existing
+              </span>
+            </div>
+          </div>
+          
+          {/* Join room */}
+          <div className="mb-4">
+            <label 
+              className="block text-sm font-bold mb-2"
+              style={{ color: currentTheme.colors.text }}
+            >
+              Room Code
+            </label>
+            <input
+              type="text"
+              value={roomCode}
+              onChange={(e) => setRoomCode(e.target.value.toUpperCase())}
+              placeholder="ABCDEF"
+              maxLength={6}
+              className="w-full px-4 py-3 border-2 rounded-xl focus:outline-none text-center text-2xl font-bold uppercase tracking-wider transition-all"
+              style={{
+                borderColor: currentTheme.colors.primary + '40',
+                backgroundColor: currentTheme.id === 'dark' || currentTheme.id === 'halloween' || currentTheme.id === 'matrix' 
+                  ? currentTheme.colors.background 
+                  : '#FFFFFF',
+                color: currentTheme.colors.text
+              }}
+              onFocus={(e) => e.target.style.borderColor = currentTheme.colors.primary}
+              onBlur={(e) => e.target.style.borderColor = currentTheme.colors.primary + '40'}
+              onKeyDown={(e) => e.key === 'Enter' && joinRoom()}
+            />
+          </div>
+          
+          <button
+            onClick={joinRoom}
+            disabled={!name.trim() || !roomCode.trim() || isJoining}
+            className="w-full py-4 text-white font-bold rounded-xl disabled:opacity-50 disabled:cursor-not-allowed text-lg shadow-lg transition transform hover:scale-105"
+            style={{
+              backgroundColor: !name.trim() || !roomCode.trim() || isJoining 
+                ? '#9CA3AF'
+                : currentTheme.colors.text === '#22C55E' || currentTheme.id === 'dark'
+                  ? currentTheme.colors.primary
+                  : '#1F2937'
+            }}
+          >
+            {isJoining ? 'Joining...' : '🚪 Join Room'}
+          </button>
+          
+          {/* How to play */}
+          <div 
+            className="mt-8 p-4 rounded-xl transition-all"
+            style={{
+              backgroundColor: currentTheme.colors.primary + '15',
+              borderColor: currentTheme.colors.primary + '30',
+              borderWidth: '2px'
+            }}
+          >
+            <h3 
+              className="font-bold mb-2"
+              style={{ color: currentTheme.colors.primary }}
+            >
+              How to Play:
+            </h3>
+            <ol className="text-sm space-y-1 list-decimal list-inside opacity-90">
+              <li>Someone writes a sentence</li>
+              <li>Next player draws it</li>
+              <li>Next player describes the drawing</li>
+              <li>Repeat until everyone&apos;s done!</li>
+              <li>See the hilarious results! 😂</li>
+            </ol>
+          </div>
         </div>
       </div>
-    </div>
+    </>
   )
 }
