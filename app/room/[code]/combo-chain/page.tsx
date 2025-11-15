@@ -476,7 +476,7 @@ export default function ComboChainPage() {
             </div>
           </div>
         </div>
-        
+
           {/* Canvas Container */}
           <div className="flex justify-center mb-6">
           <div className="relative">

@@ -168,6 +168,7 @@ export interface GameModeConfig {
   calculateRounds: (playerCount: number) => number
   supportsVoting: boolean
   allowsSpectators: boolean
+  difficulty: 'easy' | 'medium' | 'hard'  // ← AJOUTE CETTE LIGNE
 }
 
 // types/game.ts - REMPLACER GAME_MODE_CONFIGS
