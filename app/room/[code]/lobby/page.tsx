@@ -3,15 +3,15 @@
 import { useEffect, useState } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
-import { useGameStore } from '@/lib/store'
 import { Player, Room } from '@/types/game'
 import { PlayerList } from '@/components/PlayerList'
+import { GameSettings } from '@/components/GameSettings'
+import { Chat } from '@/components/Chat'
 import toast, { Toaster } from 'react-hot-toast'
 
 export default function LobbyPage() {
   const params = useParams()
   const router = useRouter()
-  const { setRoom, setCurrentPlayer } = useGameStore()
   
   const [room, setLocalRoom] = useState<Room | null>(null)
   const [players, setPlayers] = useState<Player[]>([])
@@ -48,7 +48,6 @@ export default function LobbyPage() {
       
       if (roomError) throw roomError
       setLocalRoom(roomData)
-      setRoom(roomData)
       
       const { data: playersData, error: playersError } = await supabase
         .from('players')
@@ -62,7 +61,6 @@ export default function LobbyPage() {
       const current = playersData.find(p => p.id === playerId)
       if (current) {
         setLocalCurrentPlayer(current)
-        setCurrentPlayer(current)
         setIsReady(current.is_ready)
       }
     } catch (error) {
@@ -90,7 +88,6 @@ export default function LobbyPage() {
           const newPlayer = payload.new as Player
           
           setPlayers(prev => {
-            // Éviter les doublons
             if (prev.find(p => p.id === newPlayer.id)) {
               return prev
             }
@@ -132,7 +129,6 @@ export default function LobbyPage() {
             p.id === updatedPlayer.id ? updatedPlayer : p
           ))
           
-          // Si c'est le joueur actuel, mettre à jour son état
           if (updatedPlayer.id === playerId) {
             setLocalCurrentPlayer(updatedPlayer)
             setIsReady(updatedPlayer.is_ready)
@@ -152,7 +148,6 @@ export default function LobbyPage() {
           const updatedRoom = payload.new as Room
           
           setLocalRoom(updatedRoom)
-          setRoom(updatedRoom)
           
           if (updatedRoom.status === 'playing') {
             console.log('🚀 Redirecting to game...')
@@ -224,7 +219,6 @@ export default function LobbyPage() {
       
       console.log('✅ Game started:', data)
       
-      // Force redirect après 2s si le realtime ne marche pas
       setTimeout(() => {
         router.push(`/room/${roomCode}/game`)
       }, 2000)
@@ -290,6 +284,9 @@ export default function LobbyPage() {
           </div>
           
           <div className="space-y-4">
+            {/* Settings Button */}
+            <GameSettings room={room} isHost={currentPlayer.is_host} />
+            
             {!currentPlayer.is_host && (
               <button
                 onClick={toggleReady}
@@ -345,6 +342,9 @@ export default function LobbyPage() {
           </div>
         </div>
       </div>
+      
+      {/* Chat Component */}
+      {currentPlayer && <Chat roomId={room.id} currentPlayer={currentPlayer} />}
     </div>
   )
 }

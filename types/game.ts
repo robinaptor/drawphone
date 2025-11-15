@@ -61,3 +61,13 @@ export interface Vote {
   round_id: string
   created_at: string
 }
+
+export interface Message {
+     id: string
+     room_id: string
+     player_id: string
+     player_name: string
+     player_color: string
+     message: string
+     created_at: string
+   }
