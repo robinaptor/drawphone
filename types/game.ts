@@ -156,6 +156,7 @@ export interface BattleRoyaleVote {
 // CONFIGURATION PAR MODE
 // ============================================
 
+// Assure-toi que l'interface a bien difficulty
 export interface GameModeConfig {
   id: GameMode
   name: string
@@ -168,13 +169,11 @@ export interface GameModeConfig {
   calculateRounds: (playerCount: number) => number
   supportsVoting: boolean
   allowsSpectators: boolean
-  difficulty: 'easy' | 'medium' | 'hard'  // ← AJOUTE CETTE LIGNE
+  difficulty: 'easy' | 'medium' | 'hard' // requis
 }
 
-// types/game.ts - REMPLACER GAME_MODE_CONFIGS
-
 export const GAME_MODE_CONFIGS: Record<GameMode, GameModeConfig> = {
-  'classic': {
+  classic: {
     id: 'classic',
     name: 'Classic',
     emoji: '🎨',
@@ -186,41 +185,44 @@ export const GAME_MODE_CONFIGS: Record<GameMode, GameModeConfig> = {
     calculateRounds: (playerCount) => playerCount,
     supportsVoting: true,
     allowsSpectators: false,
+    difficulty: 'easy'
   },
-  
+
   'cadavre-exquis': {
     id: 'cadavre-exquis',
     name: 'Cadavre Exquis',
     emoji: '🎭',
-    description: 'Crée des créatures folles ! Chacun dessine une partie sans voir le reste.',
+    description: 'Draw different parts without seeing the full picture!',
     minPlayers: 3,
-    maxPlayers: 6,
-    defaultRoundTime: 60,
-    roundTimeOptions: [45, 60, 90],
-    calculateRounds: (playerCount) => 3, // Toujours 3 parties (tête/corps/jambes)
+    maxPlayers: 12,
+    defaultRoundTime: 45,
+    roundTimeOptions: [30, 45, 60],
+    calculateRounds: () => 3,
     supportsVoting: true,
     allowsSpectators: false,
+    difficulty: 'easy'
   },
-  
+
   'combo-chain': {
     id: 'combo-chain',
     name: 'Combo Chain',
     emoji: '🤝',
-    description: 'Dessinez tous ensemble sur le même canvas en même temps !',
+    description: 'Everyone draws on the same canvas simultaneously!',
     minPlayers: 2,
     maxPlayers: 8,
     defaultRoundTime: 90,
     roundTimeOptions: [60, 90, 120],
-    calculateRounds: (playerCount) => 1,
+    calculateRounds: () => 1,
     supportsVoting: false,
     allowsSpectators: true,
+    difficulty: 'medium'
   },
-  
+
   'pixel-perfect': {
     id: 'pixel-perfect',
     name: 'Pixel Perfect',
-    emoji: '🎯',
-    description: 'Mémorise et reproduis le pixel art ! Test ta mémoire visuelle.',
+    emoji: '🎮',
+    description: 'Classic mode but in glorious pixel art!',
     minPlayers: 2,
     maxPlayers: 12,
     defaultRoundTime: 60,
@@ -228,13 +230,14 @@ export const GAME_MODE_CONFIGS: Record<GameMode, GameModeConfig> = {
     calculateRounds: (playerCount) => playerCount,
     supportsVoting: true,
     allowsSpectators: false,
+    difficulty: 'medium'
   },
-  
+
   'morph-mode': {
     id: 'morph-mode',
     name: 'Morph Mode',
     emoji: '🔄',
-    description: 'Transforme progressivement un objet en un autre, étape par étape !',
+    description: 'Transform one object into another, step by step!',
     minPlayers: 4,
     maxPlayers: 8,
     defaultRoundTime: 60,
@@ -242,30 +245,31 @@ export const GAME_MODE_CONFIGS: Record<GameMode, GameModeConfig> = {
     calculateRounds: (playerCount) => playerCount,
     supportsVoting: true,
     allowsSpectators: false,
+    difficulty: 'hard'
   },
-  
+
   'battle-royale': {
     id: 'battle-royale',
     name: 'Battle Royale',
     emoji: '🏆',
-    description: 'Survie du meilleur dessinateur ! Les pires dessins sont éliminés.',
-    minPlayers: 4,
-    maxPlayers: 16,
+    description: 'Draw and survive! Worst drawings get eliminated!',
+    minPlayers: 6,
+    maxPlayers: 12,
     defaultRoundTime: 45,
     roundTimeOptions: [30, 45, 60],
     calculateRounds: (playerCount) => {
       let rounds = 0
       let remaining = playerCount
-      // Éliminer 2 joueurs par round jusqu'à ce qu'il en reste 2
       while (remaining > 2) {
         remaining -= 2
         rounds++
       }
-      return rounds + 1 // +1 pour la finale
+      return rounds + 1
     },
     supportsVoting: true,
     allowsSpectators: true,
-  },
+    difficulty: 'hard'
+  }
 }
 
 // ============================================
