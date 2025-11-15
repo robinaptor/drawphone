@@ -1,8 +1,39 @@
 // components/DrawingDisplay.tsx - VERSION COMPLÈTE CORRIGÉE
 
+// components/DrawingDisplay.tsx
+
 'use client'
 
 import { useEffect, useRef } from 'react'
+
+interface DrawingDisplayProps {
+  data: any
+  width?: number
+  height?: number
+  className?: string  // ← AJOUTE CETTE LIGNE
+}
+
+export default function DrawingDisplay({ 
+  data, 
+  width = 800, 
+  height = 600,
+  className = ''  // ← NOUVEAU
+}: DrawingDisplayProps) {
+  const canvasRef = useRef<HTMLCanvasElement>(null)
+
+  useEffect(() => {
+    // ... ton code existant
+  }, [data, width, height])
+
+  return (
+    <canvas
+      ref={canvasRef}
+      width={width}
+      height={height}
+      className={`border-2 border-gray-300 rounded-lg bg-white shadow-lg ${className}`}  // ← MODIFIE CETTE LIGNE
+    />
+  )
+}
 
 interface DrawingDisplayProps {
   data: any
@@ -140,12 +171,11 @@ export default function DrawingDisplay({ data, width = 800, height = 600 }: Draw
 
   }, [data, width, height])
 
-  return (
-    <canvas
-      ref={canvasRef}
-      width={width}
-      height={height}
-      className="border-2 border-gray-300 rounded-lg bg-white shadow-lg"
-    />
-  )
-}
+return (
+  <canvas
+    ref={canvasRef}
+    width={width}
+    height={height}
+    className={`border-2 border-gray-300 rounded-lg bg-white shadow-lg ${className}`}
+  />
+)
