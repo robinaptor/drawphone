@@ -128,9 +128,9 @@ export default function PixelPerfectPage() {
     }, 100)
   }
 
-  const drawGrid = (canvasRef: React.RefObject<HTMLCanvasElement>, grid: PixelGrid) => {
-    const canvas = canvasRef.current
-    if (!canvas) return
+  const drawGrid = (canvasRef: React.RefObject<HTMLCanvasElement | null>, grid: PixelGrid) => {
+     const canvas = canvasRef.current
+     if (!canvas) return
 
     const ctx = canvas.getContext('2d')
     if (!ctx) return
