@@ -2,7 +2,7 @@
 
 import { useState, useRef, useEffect } from 'react'
 import { PromptContent } from '@/types/game'
-import { DrawingDisplay } from './DrawingDisplay'
+import DrawingDisplay from './DrawingDisplay'
 
 interface PromptInputProps {
   type: 'prompt' | 'describe'

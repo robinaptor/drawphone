@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
 import { Round, Player, Room } from '@/types/game'
-import { DrawingDisplay } from '@/components/DrawingDisplay'
+import DrawingDisplay from '@/components/DrawingDisplay'
 import toast, { Toaster } from 'react-hot-toast'
 
 export default function VotePage() {
