@@ -3,36 +3,44 @@ import { Player, Round } from '@/types/game'
 export function calculateRoundAssignments(
   players: Player[],
   currentRound: number,
-  existingRounds: Round[]
-): Map<string, { bookId: string; type: 'prompt' | 'draw' | 'describe'; previousRound?: Round }> {
-  const assignments = new Map()
-  
-  players.forEach((player, playerIndex) => {
-    const bookIndex = (playerIndex + currentRound) % players.length
-    const bookId = `book-${players[bookIndex].id}`
-    
-    const bookRounds = existingRounds
-      .filter(r => r.book_id === bookId)
-      .sort((a, b) => a.round_number - b.round_number)
-    
-    let type: 'prompt' | 'draw' | 'describe'
-    const roundsInBook = bookRounds.length
-    
-    if (roundsInBook === 0) {
-      type = 'prompt'
-    } else if (roundsInBook % 2 === 1) {
-      type = 'draw'
-    } else {
-      type = 'describe'
+  rounds: Round[]
+) {
+  // ordre stable par joined_at
+  const order = [...players].sort((a, b) =>
+    new Date(a.joined_at).getTime() - new Date(b.joined_at).getTime()
+  )
+  const n = order.length
+  const assignments = new Map<string, {
+    bookId: string
+    type: 'prompt' | 'draw' | 'describe'
+    previousRound?: Round
+  }>()
+
+  order.forEach((player, i) => {
+    if (currentRound === 0) {
+      assignments.set(player.id, { bookId: player.id, type: 'prompt' })
+      return
     }
-    
+
+    const offset = currentRound % n
+    const ownerIndex = (i - offset + n) % n
+    const bookOwner = order[ownerIndex]
+    const bookId = bookOwner.id
+
+    const prev = rounds.find(r =>
+      r.book_id === bookId && r.round_number === currentRound - 1
+    )
+
+    const type: 'draw' | 'describe' =
+      prev?.type === 'prompt' ? 'draw' : 'describe'
+
     assignments.set(player.id, {
       bookId,
       type,
-      previousRound: bookRounds[bookRounds.length - 1]
+      previousRound: prev
     })
   })
-  
+
   return assignments
 }
 

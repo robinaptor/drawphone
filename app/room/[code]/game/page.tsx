@@ -86,8 +86,8 @@ export default function GamePage() {
       const { data: playersData, error: playersError } = await supabase
       .from('players')
       .select('*')
-      .eq('room_code', roomCode.toUpperCase())
-      .order('joined_at', { ascending: true })
+      .eq('room_code', roomCode.toUpperCase()) // ← room_code
+      .order('joined_at', { ascending: true }) // ← joined_at
       
       if (playersError) throw playersError
       
@@ -156,10 +156,8 @@ export default function GamePage() {
           setRoom(updatedRoom)
           
           if (updatedRoom.status === 'voting') {
-            console.log('🗳️ Voting time!')
             router.push(`/room/${roomCode}/vote`)
           } else if (updatedRoom.status === 'results') {
-            console.log('🎉 Game finished, going to results')
             router.push(`/room/${roomCode}/results`)
           }
         }
@@ -225,19 +223,24 @@ export default function GamePage() {
   
   const checkIfRoundComplete = () => {
     if (!room) return
-    
+  
     const currentRoundSubmissions = rounds.filter(
       r => r.round_number === room.current_round
     )
-    
-    const submittedPlayerIds = currentRoundSubmissions.map(r => r.player_id)
+  
+    // Unicité par joueur
+    const submittedBy = new Set(currentRoundSubmissions.map(r => r.player_id))
     const waiting = players
-      .filter(p => !submittedPlayerIds.includes(p.id))
+      .filter(p => !submittedBy.has(p.id))
       .map(p => p.id)
-    
+  
     setWaitingForPlayers(waiting)
-    
-    if (waiting.length === 0 && currentRoundSubmissions.length === players.length && currentPlayer?.is_host) {
+  
+    if (
+      waiting.length === 0 &&
+      submittedBy.size === players.length &&
+      currentPlayer?.is_host
+    ) {
       console.log('✅ Round complete! Advancing...')
       advanceRound()
     }
@@ -245,11 +248,12 @@ export default function GamePage() {
   
   const advanceRound = async () => {
     if (!room || !currentPlayer?.is_host) return
-    
-    const nextRound = room.current_round + 1
-    
+  
+    const nextRound = (room.current_round ?? 0) + 1
+    const maxRounds = room.max_rounds ?? players.length // fallback
+  
     try {
-      if (nextRound >= room.max_rounds) {
+      if (nextRound >= maxRounds) {
         console.log('🎊 Game finished! Going to vote...')
         await supabase
           .from('rooms')
@@ -261,7 +265,6 @@ export default function GamePage() {
           .from('rooms')
           .update({ current_round: nextRound })
           .eq('id', room.id)
-        
         setHasSubmitted(false)
       }
     } catch (error) {
