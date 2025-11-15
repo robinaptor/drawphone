@@ -285,7 +285,7 @@ export default function PixelPerfectPage() {
 
       console.log('Checking completion:', { players: players?.length, rounds: count })
 
-      if (rounds && players && count >= players.length) {
+      if (rounds && players && count !== null && count >= players.length) {
         await supabase
           .from('rooms')
           .update({ status: 'results' })
