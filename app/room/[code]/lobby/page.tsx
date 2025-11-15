@@ -61,7 +61,7 @@ export default function LobbyPage() {
       const current = playersData.find(p => p.id === playerId)
       if (current) {
         setLocalCurrentPlayer(current)
-        setIsReady(current.is_ready)
+        setIsReady(!!current.is_ready) // force en boolean
       }
     } catch (error) {
       console.error('Error loading room:', error)
@@ -131,7 +131,7 @@ export default function LobbyPage() {
           
           if (updatedPlayer.id === playerId) {
             setLocalCurrentPlayer(updatedPlayer)
-            setIsReady(updatedPlayer.is_ready)
+            setIsReady(!!updatedPlayer.is_ready) // force en boolean
           }
         }
       )
