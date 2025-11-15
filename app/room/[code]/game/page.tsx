@@ -82,11 +82,12 @@ export default function GamePage() {
       
       setRoom(roomData)
       
+      // ✅ APRÈS
       const { data: playersData, error: playersError } = await supabase
-        .from('players')
-        .select('*')
-        .eq('room_id', roomData.id)
-        .order('created_at', { ascending: true })
+      .from('players')
+      .select('*')
+      .eq('room_code', roomCode.toUpperCase())
+      .order('joined_at', { ascending: true })
       
       if (playersError) throw playersError
       
@@ -119,7 +120,7 @@ export default function GamePage() {
     } catch (error) {
       console.error('Error loading game:', error)
       toast.error('Failed to load game')
-      router.push('/')
+      setIsLoading(false) // Laisse l'écran d'erreur s’afficher
     }
   }
   
