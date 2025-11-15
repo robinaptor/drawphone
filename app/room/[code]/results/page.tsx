@@ -6,7 +6,7 @@ import { supabase } from '@/lib/supabase'
 import { Round, Player, Room, Vote } from '@/types/game'
 import { organizeIntoBooks } from '@/lib/game-logic'
 import { ResultsCarousel } from '@/components/ResultsCarousel'
-import { DrawingDisplay } from '@/components/DrawingDisplay'
+import DrawingDisplay from '@/components/DrawingDisplay'
 import toast, { Toaster } from 'react-hot-toast'
 import { motion } from 'framer-motion'
 

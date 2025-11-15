@@ -1,75 +1,88 @@
+// app/api/rooms/route.ts - VERSION FINALE RECOMMANDÉE
+
 import { NextRequest, NextResponse } from 'next/server'
 import { supabase } from '@/lib/supabase'
-import { generateRoomCode, generateColor, generateAvatarSeed } from '@/lib/utils'
-import { GameMode, getGameModeConfig } from '@/types/game'
+import { GAME_MODE_CONFIGS, GameMode } from '@/types/game'
 
-export async function POST(req: NextRequest) {
+export async function POST(request: NextRequest) {
+  console.log('🚀 [API] POST /api/rooms - START')
+  
   try {
-    const { hostName, gameMode = 'classic' } = await req.json()
-    
-    if (!hostName || hostName.trim().length === 0) {
+    const body = await request.json()
+    const playerName = body.hostName || body.playerName
+    const gameMode = (body.gameMode || 'classic') as GameMode
+
+    if (!playerName) {
       return NextResponse.json({ error: 'Name required' }, { status: 400 })
     }
-    
-    let code = generateRoomCode()
-    let attempts = 0
-    
-    while (attempts < 10) {
-      const { data: existing } = await supabase
-        .from('rooms')
-        .select('code')
-        .eq('code', code)
-        .single()
-      
-      if (!existing) break
-      code = generateRoomCode()
-      attempts++
-    }
-    
-    const modeConfig = getGameModeConfig(gameMode as GameMode)
-    
+
+    const code = Math.random().toString(36).substring(2, 8).toUpperCase()
+
+    // 1. Créer la room
     const { data: room, error: roomError } = await supabase
       .from('rooms')
       .insert({
         code,
-        max_rounds: 6,
         game_mode: gameMode,
-        max_players: modeConfig.maxPlayers,
-        round_time: modeConfig.defaultRoundTime,
+        status: 'lobby',
+        current_round: 0,
+        max_rounds: null,
+        max_players: GAME_MODE_CONFIGS[gameMode]?.maxPlayers || 12,
+        round_time: GAME_MODE_CONFIGS[gameMode]?.defaultRoundTime || 60,
       })
       .select()
       .single()
-    
-    if (roomError) throw roomError
+
+    if (roomError) {
+      console.error('❌ Room error:', roomError)
+      return NextResponse.json({ 
+        error: 'Failed to create room',
+        details: roomError.message 
+      }, { status: 500 })
+    }
+
+    console.log('✅ Room created:', room)
+
+    // 2. Créer le joueur
+    const playerId = `player_${Date.now()}_${Math.random().toString(36).substring(7)}`
+    const colors = ['#EF4444', '#F59E0B', '#10B981', '#3B82F6', '#8B5CF6', '#EC4899']
+    const randomColor = colors[Math.floor(Math.random() * colors.length)]
+    const avatars = ['👤', '😀', '😎', '🤓', '🥳', '🤠', '👻', '🤖', '👽', '🦄']
+    const randomAvatar = avatars[Math.floor(Math.random() * avatars.length)]
     
     const { data: player, error: playerError } = await supabase
       .from('players')
       .insert({
-        room_id: room.id,
-        name: hostName.trim(),
-        color: generateColor(),
+        id: playerId,
+        room_code: code,        // ← room_code
+        name: playerName.trim(),
+        avatar: randomAvatar,   // ← avatar
+        color: randomColor,     // ← color (après avoir ajouté la colonne)
         is_host: true,
-        is_ready: false,
-        is_eliminated: false,
-        avatar_seed: generateAvatarSeed()
+        is_ready: false,        // ← après avoir ajouté la colonne
+        is_eliminated: false    // ← après avoir ajouté la colonne
       })
       .select()
       .single()
-    
-    if (playerError) throw playerError
-    
-    await supabase
-      .from('rooms')
-      .update({ host_id: player.id })
-      .eq('id', room.id)
-    
+
+    if (playerError) {
+      console.error('❌ Player error:', playerError)
+      await supabase.from('rooms').delete().eq('code', code)
+      return NextResponse.json({ 
+        error: 'Failed to create player',
+        details: playerError.message 
+      }, { status: 500 })
+    }
+
+    console.log('✅ Player created:', player)
+    console.log('✅ Success!')
+
+    return NextResponse.json({ room, player })
+
+  } catch (error: any) {
+    console.error('💥 Error:', error)
     return NextResponse.json({ 
-      room: { ...room, host_id: player.id },
-      player 
-    })
-    
-  } catch (error) {
-    console.error('Error creating room:', error)
-    return NextResponse.json({ error: 'Failed to create room' }, { status: 500 })
+      error: error.message || 'Internal server error' 
+    }, { status: 500 })
   }
 }

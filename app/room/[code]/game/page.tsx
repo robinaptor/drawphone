@@ -11,6 +11,9 @@ import { PromptInput } from '@/components/PromptInput'
 import { Timer } from '@/components/Timer'
 import { WaitingScreen } from '@/components/WaitingScreen'
 import toast, { Toaster } from 'react-hot-toast'
+import { GameModeInfo } from '@/components/GameModeInfo'
+import { calculateModeSpecificAssignments } from '@/lib/game-logic-modes'
+import { GameMode } from '@/types/game'
 
 type Assignment = {
   bookId: string
@@ -173,6 +176,31 @@ export default function GamePage() {
   const calculateCurrentAssignment = () => {
     if (!room || !currentPlayer) return
     
+    // Si c'est un mode spécial, utiliser la logique spécifique
+    if (room.game_mode !== 'classic') {
+      const modeAssignments = calculateModeSpecificAssignments(
+        room.game_mode as GameMode,
+        players,
+        room.current_round,
+        rounds
+      )
+      
+      const myAssignment = modeAssignments.get(currentPlayer.id)
+      if (myAssignment) {
+        console.log('🎯 My mode-specific assignment:', myAssignment)
+        setCurrentAssignment(myAssignment)
+        
+        const myRound = rounds.find(
+          r => r.player_id === currentPlayer.id && 
+               r.round_number === room.current_round
+        )
+        
+        setHasSubmitted(!!myRound)
+      }
+      return
+    }
+    
+    // Logique classic mode (existante)
     const assignments = calculateRoundAssignments(
       players,
       room.current_round,
@@ -341,11 +369,10 @@ export default function GamePage() {
           <h1 className="text-4xl font-black text-white mb-2">
             Round {room.current_round + 1} / {room.max_rounds}
           </h1>
-          <p className="text-white text-lg mb-4">
-            {currentAssignment.type === 'prompt' && '📝 Write a sentence'}
-            {currentAssignment.type === 'draw' && '🎨 Draw it!'}
-            {currentAssignment.type === 'describe' && '👀 Describe the drawing'}
-          </p>
+          <GameModeInfo 
+            gameMode={room.game_mode as GameMode} 
+            currentRound={room.current_round} 
+          />
           
           <Timer 
             duration={room.round_time}

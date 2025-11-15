@@ -5,9 +5,9 @@ import { useRouter } from 'next/navigation'
 import { useTheme } from '@/lib/ThemeContext'
 import { ThemeSelector } from '@/components/ThemeSelector'
 import { ThemeEffects } from '@/components/ThemeEffects'
+import toast, { Toaster } from 'react-hot-toast'
 import { ModeSelector } from '@/components/ModeSelector'
 import { GameMode } from '@/types/game'
-import toast, { Toaster } from 'react-hot-toast'
 
 export default function Home() {
   const router = useRouter()
@@ -33,7 +33,7 @@ export default function Home() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ 
           hostName: name.trim(),
-          gameMode: selectedMode 
+          gameMode: selectedMode  // ← AJOUTE CETTE LIGNE
         })
       })
       
@@ -163,7 +163,7 @@ export default function Home() {
               onKeyDown={(e) => e.key === 'Enter' && createRoom()}
             />
           </div>
-          
+
           {/* Mode Selector Toggle */}
           {!showModeSelector && (
             <button
@@ -176,7 +176,7 @@ export default function Home() {
               🎮 Choose Game Mode
             </button>
           )}
-          
+
           {/* Mode Selector */}
           {showModeSelector && (
             <div className="mb-6">

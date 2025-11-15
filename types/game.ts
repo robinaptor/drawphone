@@ -21,16 +21,18 @@ export interface Room {
   created_at: string
 }
 
+// types/game.ts - STRUCTURE ADAPTÉE
+
 export interface Player {
   id: string
-  room_id: string
+  room_code: string      // ← Changé de room_id
   name: string
-  color: string
+  avatar: string         // ← Changé de color
   is_host: boolean
-  is_ready: boolean
-  is_eliminated: boolean  // ← NOUVEAU
-  avatar_seed: string
-  created_at: string
+  is_ready?: boolean     // ← Optionnel si pas dans la DB
+  is_eliminated?: boolean // ← Optionnel si pas dans la DB
+  joined_at: string      // ← Changé de created_at
+  color?: string         // ← Optionnel, pour compatibilité
 }
 
 export interface Round {
@@ -168,6 +170,8 @@ export interface GameModeConfig {
   allowsSpectators: boolean
 }
 
+// types/game.ts - REMPLACER GAME_MODE_CONFIGS
+
 export const GAME_MODE_CONFIGS: Record<GameMode, GameModeConfig> = {
   'classic': {
     id: 'classic',
@@ -187,12 +191,12 @@ export const GAME_MODE_CONFIGS: Record<GameMode, GameModeConfig> = {
     id: 'cadavre-exquis',
     name: 'Cadavre Exquis',
     emoji: '🎭',
-    description: 'Draw different parts without seeing the full picture!',
+    description: 'Crée des créatures folles ! Chacun dessine une partie sans voir le reste.',
     minPlayers: 3,
-    maxPlayers: 12,
-    defaultRoundTime: 45,
-    roundTimeOptions: [30, 45, 60],
-    calculateRounds: (playerCount) => 3,
+    maxPlayers: 6,
+    defaultRoundTime: 60,
+    roundTimeOptions: [45, 60, 90],
+    calculateRounds: (playerCount) => 3, // Toujours 3 parties (tête/corps/jambes)
     supportsVoting: true,
     allowsSpectators: false,
   },
@@ -201,9 +205,9 @@ export const GAME_MODE_CONFIGS: Record<GameMode, GameModeConfig> = {
     id: 'combo-chain',
     name: 'Combo Chain',
     emoji: '🤝',
-    description: 'Everyone draws on the same canvas simultaneously!',
+    description: 'Dessinez tous ensemble sur le même canvas en même temps !',
     minPlayers: 2,
-    maxPlayers: 4,
+    maxPlayers: 8,
     defaultRoundTime: 90,
     roundTimeOptions: [60, 90, 120],
     calculateRounds: (playerCount) => 1,
@@ -214,9 +218,9 @@ export const GAME_MODE_CONFIGS: Record<GameMode, GameModeConfig> = {
   'pixel-perfect': {
     id: 'pixel-perfect',
     name: 'Pixel Perfect',
-    emoji: '🎮',
-    description: 'Classic mode but in glorious pixel art!',
-    minPlayers: 3,
+    emoji: '🎯',
+    description: 'Mémorise et reproduis le pixel art ! Test ta mémoire visuelle.',
+    minPlayers: 2,
     maxPlayers: 12,
     defaultRoundTime: 60,
     roundTimeOptions: [45, 60, 90],
@@ -229,7 +233,7 @@ export const GAME_MODE_CONFIGS: Record<GameMode, GameModeConfig> = {
     id: 'morph-mode',
     name: 'Morph Mode',
     emoji: '🔄',
-    description: 'Transform one object into another, step by step!',
+    description: 'Transforme progressivement un objet en un autre, étape par étape !',
     minPlayers: 4,
     maxPlayers: 8,
     defaultRoundTime: 60,
@@ -243,19 +247,20 @@ export const GAME_MODE_CONFIGS: Record<GameMode, GameModeConfig> = {
     id: 'battle-royale',
     name: 'Battle Royale',
     emoji: '🏆',
-    description: 'Draw and survive! Worst drawings get eliminated!',
-    minPlayers: 6,
-    maxPlayers: 12,
+    description: 'Survie du meilleur dessinateur ! Les pires dessins sont éliminés.',
+    minPlayers: 4,
+    maxPlayers: 16,
     defaultRoundTime: 45,
     roundTimeOptions: [30, 45, 60],
     calculateRounds: (playerCount) => {
       let rounds = 0
       let remaining = playerCount
+      // Éliminer 2 joueurs par round jusqu'à ce qu'il en reste 2
       while (remaining > 2) {
         remaining -= 2
         rounds++
       }
-      return rounds + 1
+      return rounds + 1 // +1 pour la finale
     },
     supportsVoting: true,
     allowsSpectators: true,

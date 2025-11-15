@@ -3,7 +3,7 @@
 import { useState, useEffect } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { Round, Player } from '@/types/game'
-import { DrawingDisplay } from './DrawingDisplay'
+import DrawingDisplay from '@/components/DrawingDisplay'
 
 interface Book {
   id: string
