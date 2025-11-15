@@ -17,7 +17,6 @@ export default function VotePage() {
   const [drawings, setDrawings] = useState<Round[]>([])
   const [selectedRoundId, setSelectedRoundId] = useState<string | null>(null)
   const [hasVoted, setHasVoted] = useState(false)
-  const [voteCounts, setVoteCounts] = useState<Map<string, number>>(new Map())
   const [totalVotes, setTotalVotes] = useState(0)
   const [isSubmitting, setIsSubmitting] = useState(false)
   
@@ -33,12 +32,64 @@ export default function VotePage() {
     loadVotingData()
   }, [playerId])
   
+  // Polling toutes les 2 secondes pour vérifier le status
   useEffect(() => {
     if (!room) return
     
-    const cleanup = setupRealtimeSubscription()
-    return cleanup
-  }, [room?.id])
+    const interval = setInterval(() => {
+      checkRoomStatus()
+      checkVoteCount()
+    }, 2000)
+    
+    return () => clearInterval(interval)
+  }, [room])
+  
+  const checkRoomStatus = async () => {
+    if (!room) return
+    
+    const { data: roomData } = await supabase
+      .from('rooms')
+      .select('status')
+      .eq('id', room.id)
+      .single()
+    
+    if (roomData && (roomData.status === 'results' || roomData.status === 'finished')) {
+      console.log('🏆 Room status changed to results, redirecting...')
+      router.push(`/room/${roomCode}/results`)
+    }
+  }
+  
+  const checkVoteCount = async () => {
+    if (!room) return
+    
+    const { count } = await supabase
+      .from('votes')
+      .select('*', { count: 'exact', head: true })
+      .eq('room_id', room.id)
+    
+    setTotalVotes(count || 0)
+    
+    console.log(`📊 Votes: ${count} / ${players.length}`)
+    
+    if (count === players.length && currentPlayer?.is_host) {
+      console.log('✅ Everyone voted! Host changing status...')
+      
+      const { error } = await supabase
+        .from('rooms')
+        .update({ status: 'results' })
+        .eq('id', room.id)
+      
+      if (error) {
+        console.error('Error updating room status:', error)
+      } else {
+        console.log('✅ Status changed to results')
+        // Rediriger immédiatement le host aussi
+        setTimeout(() => {
+          router.push(`/room/${roomCode}/results`)
+        }, 1000)
+      }
+    }
+  }
   
   const loadVotingData = async () => {
     try {
@@ -52,7 +103,6 @@ export default function VotePage() {
       
       console.log('📊 Room loaded:', roomData)
       
-      // Si déjà sur results, rediriger
       if (roomData.status === 'results' || roomData.status === 'finished') {
         console.log('🏆 Already on results, redirecting...')
         router.push(`/room/${roomCode}/results`)
@@ -74,7 +124,6 @@ export default function VotePage() {
         setCurrentPlayer(current)
       }
       
-      // Load all drawings (type = 'draw')
       const { data: roundsData } = await supabase
         .from('rounds')
         .select('*')
@@ -84,7 +133,6 @@ export default function VotePage() {
       
       setDrawings(roundsData || [])
       
-      // Check if already voted
       const { data: myVote } = await supabase
         .from('votes')
         .select('*')
@@ -97,112 +145,15 @@ export default function VotePage() {
         setSelectedRoundId(myVote.round_id)
       }
       
-      // Load vote counts
-      loadVoteCounts(roomData.id)
+      const { count } = await supabase
+        .from('votes')
+        .select('*', { count: 'exact', head: true })
+        .eq('room_id', roomData.id)
+      
+      setTotalVotes(count || 0)
       
     } catch (error) {
       console.error('Error loading voting data:', error)
-    }
-  }
-  
-  const loadVoteCounts = async (roomId: string) => {
-    const { data: votes } = await supabase
-      .from('votes')
-      .select('round_id')
-      .eq('room_id', roomId)
-    
-    const counts = new Map<string, number>()
-    votes?.forEach(vote => {
-      counts.set(vote.round_id, (counts.get(vote.round_id) || 0) + 1)
-    })
-    
-    setVoteCounts(counts)
-    setTotalVotes(votes?.length || 0)
-  }
-  
-  const setupRealtimeSubscription = () => {
-    console.log('🔌 Setting up vote realtime')
-    
-    const channel = supabase
-      .channel(`vote-${room?.id}`)
-      .on(
-        'postgres_changes',
-        {
-          event: '*',
-          schema: 'public',
-          table: 'votes',
-          filter: `room_id=eq.${room?.id}`
-        },
-        () => {
-          console.log('🗳️ Vote added/changed')
-          if (room) {
-            loadVoteCounts(room.id)
-            checkIfVotingComplete()
-          }
-        }
-      )
-      .on(
-        'postgres_changes',
-        {
-          event: 'UPDATE',
-          schema: 'public',
-          table: 'rooms',
-          filter: `id=eq.${room?.id}`
-        },
-        (payload) => {
-          console.log('🔄 Room updated:', payload.new)
-          const updatedRoom = payload.new as Room
-          
-          if (updatedRoom.status === 'results' || updatedRoom.status === 'finished') {
-            console.log('🏆 Going to results!')
-            router.push(`/room/${roomCode}/results`)
-          }
-        }
-      )
-      .subscribe((status) => {
-        console.log('📡 Vote subscription status:', status)
-      })
-    
-    return () => {
-      console.log('🔌 Cleaning up vote subscription')
-      supabase.removeChannel(channel)
-    }
-  }
-  
-  const checkIfVotingComplete = async () => {
-    if (!room || !currentPlayer) return
-    
-    const { count } = await supabase
-      .from('votes')
-      .select('*', { count: 'exact', head: true })
-      .eq('room_id', room.id)
-    
-    console.log(`📊 Votes: ${count} / ${players.length}`)
-    
-    if (count === players.length) {
-      console.log('✅ Everyone voted!')
-      
-      // Seul le HOST change le status
-      if (currentPlayer.is_host) {
-        console.log('👑 I am host, changing room status to results')
-        
-        try {
-          const { error } = await supabase
-            .from('rooms')
-            .update({ status: 'results' })
-            .eq('id', room.id)
-          
-          if (error) {
-            console.error('Error updating room status:', error)
-          } else {
-            console.log('✅ Room status changed to results')
-          }
-        } catch (error) {
-          console.error('Error:', error)
-        }
-      } else {
-        console.log('👤 I am not host, waiting for redirect via realtime...')
-      }
     }
   }
   
@@ -225,8 +176,10 @@ export default function VotePage() {
       setHasVoted(true)
       toast.success('Vote submitted!')
       
-      // Check if everyone voted
-      checkIfVotingComplete()
+      // Recheck immédiatement après vote
+      setTimeout(() => {
+        checkVoteCount()
+      }, 500)
       
     } catch (error) {
       console.error('Error voting:', error)
@@ -267,29 +220,39 @@ export default function VotePage() {
               {totalVotes} / {players.length} players have voted
             </p>
             
-            <div className="flex justify-center gap-2 flex-wrap">
-              {players.map((player, index) => {
-                const voted = totalVotes >= index + 1
+            <div className="w-full bg-gray-200 rounded-full h-4 mb-8">
+              <div 
+                className="bg-gradient-to-r from-green-400 to-blue-500 h-4 rounded-full transition-all duration-500"
+                style={{ width: `${(totalVotes / players.length) * 100}%` }}
+              />
+            </div>
+            
+            <div className="flex justify-center gap-3 flex-wrap">
+              {players.map((player) => {
+                const playerVoted = totalVotes > 0
                 return (
                   <div
                     key={player.id}
-                    className={`w-12 h-12 rounded-full flex items-center justify-center text-white font-bold transition ${
-                      voted ? 'scale-110' : 'opacity-50'
+                    className={`w-14 h-14 rounded-full flex items-center justify-center text-white font-bold text-lg transition-all ${
+                      playerVoted ? 'scale-110 ring-4 ring-green-400' : 'opacity-40'
                     }`}
                     style={{ backgroundColor: player.color }}
                   >
                     {player.name.charAt(0).toUpperCase()}
-                    {voted && <span className="absolute text-2xl">✓</span>}
                   </div>
                 )
               })}
             </div>
             
             {totalVotes === players.length && (
-              <div className="mt-8 text-green-600 font-bold text-xl animate-pulse">
+              <div className="mt-8 text-green-600 font-bold text-2xl animate-bounce">
                 🎉 Everyone voted! Loading results...
               </div>
             )}
+            
+            <div className="mt-6 text-sm text-gray-400">
+              Checking every 2 seconds...
+            </div>
           </div>
         </div>
       </div>
