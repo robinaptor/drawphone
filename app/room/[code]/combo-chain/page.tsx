@@ -491,26 +491,24 @@ export default function ComboChainPage() {
               className="border-4 border-white rounded-lg cursor-crosshair shadow-2xl bg-white"
             />
 
-            {/* Zone Labels */}
-            {zones.map((zone) => (
-              <div
-                key={zone.playerId}
-                style={{
-                  position: 'absolute',
-                  left: zone.x + 10,
-                  top: zone.y + 10,
-                  pointerEvents: 'none'
-                }}
-                className="bg-black/70 px-3 py-1 rounded-full text-sm font-bold flex items-center gap-1"
-                style={{ color: zone.color }}
-              >
-                <span>{zone.playerAvatar}</span>
-                <span>{zone.playerName}</span>
-                {zone.playerId === playerId && <span>(TOI)</span>}
-              </div>
-            ))}
+          {/* Zone Labels */}
+          {zones.map((zone) => (
+          <div
+          key={zone.playerId}
+          style={{
+               position: 'absolute',
+               left: zone.x + 10,
+               top: zone.y + 10,
+               pointerEvents: 'none',
+               color: zone.color
+          }}
+          className="bg-black/70 px-3 py-1 rounded-full text-sm font-bold flex items-center gap-1"
+          >
+          <span>{zone.playerAvatar}</span>
+          <span>{zone.playerName}</span>
+          {zone.playerId === playerId && <span>(TOI)</span>}
           </div>
-        </div>
+          ))}
 
         {/* Submit Button */}
         <div className="text-center">
