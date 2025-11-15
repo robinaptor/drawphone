@@ -476,20 +476,41 @@ export default function ComboChainPage() {
             </div>
           </div>
         </div>
-
-        {/* Canvas Container */}
-        <div className="flex justify-center mb-6">
+        
+          {/* Canvas Container */}
+          <div className="flex justify-center mb-6">
           <div className="relative">
-            <canvas
-              ref={canvasRef}
-              width={CANVAS_WIDTH}
-              height={CANVAS_HEIGHT}
-              onMouseDown={startDrawing}
-              onMouseMove={draw}
-              onMouseUp={stopDrawing}
-              onMouseLeave={stopDrawing}
-              className="border-4 border-white rounded-lg cursor-crosshair shadow-2xl bg-white"
-            />
+          <canvas
+               ref={canvasRef}
+               width={CANVAS_WIDTH}
+               height={CANVAS_HEIGHT}
+               onMouseDown={startDrawing}
+               onMouseMove={draw}
+               onMouseUp={stopDrawing}
+               onMouseLeave={stopDrawing}
+               className="border-4 border-white rounded-lg cursor-crosshair shadow-2xl bg-white"
+          />
+
+          {/* Zone Labels */}
+          {zones.map((zone) => (
+               <div
+               key={zone.playerId}
+               style={{
+                    position: 'absolute',
+                    left: zone.x + 10,
+                    top: zone.y + 10,
+                    pointerEvents: 'none',
+                    color: zone.color
+               }}
+               className="bg-black/70 px-3 py-1 rounded-full text-sm font-bold flex items-center gap-1"
+               >
+               <span>{zone.playerAvatar}</span>
+               <span>{zone.playerName}</span>
+               {zone.playerId === playerId && <span>(TOI)</span>}
+               </div>
+          ))}
+          </div>
+          </div>
 
           {/* Zone Labels */}
           {zones.map((zone) => (
