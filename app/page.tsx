@@ -5,6 +5,8 @@ import { useRouter } from 'next/navigation'
 import { useTheme } from '@/lib/ThemeContext'
 import { ThemeSelector } from '@/components/ThemeSelector'
 import { ThemeEffects } from '@/components/ThemeEffects'
+import { ModeSelector } from '@/components/ModeSelector'
+import { GameMode } from '@/types/game'
 import toast, { Toaster } from 'react-hot-toast'
 
 export default function Home() {
@@ -14,6 +16,8 @@ export default function Home() {
   const [roomCode, setRoomCode] = useState('')
   const [isCreating, setIsCreating] = useState(false)
   const [isJoining, setIsJoining] = useState(false)
+  const [showModeSelector, setShowModeSelector] = useState(false)
+  const [selectedMode, setSelectedMode] = useState<GameMode>('classic')
   
   const createRoom = async () => {
     if (!name.trim()) {
@@ -27,7 +31,10 @@ export default function Home() {
       const res = await fetch('/api/rooms', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ hostName: name.trim() })
+        body: JSON.stringify({ 
+          hostName: name.trim(),
+          gameMode: selectedMode 
+        })
       })
       
       if (!res.ok) throw new Error('Failed to create room')
@@ -104,7 +111,7 @@ export default function Home() {
         <Toaster position="top-center" />
         
         <div 
-          className="rounded-3xl shadow-2xl p-8 md:p-12 max-w-md w-full transition-all duration-500"
+          className="rounded-3xl shadow-2xl p-8 md:p-12 max-w-2xl w-full transition-all duration-500"
           style={{ 
             backgroundColor: currentTheme.colors.cardBg,
             color: currentTheme.colors.text
@@ -156,6 +163,29 @@ export default function Home() {
               onKeyDown={(e) => e.key === 'Enter' && createRoom()}
             />
           </div>
+          
+          {/* Mode Selector Toggle */}
+          {!showModeSelector && (
+            <button
+              onClick={() => setShowModeSelector(true)}
+              className="w-full py-3 mb-4 bg-gradient-to-r text-white font-bold rounded-xl transition transform hover:scale-105 text-base shadow-lg"
+              style={{
+                background: `linear-gradient(to right, ${currentTheme.colors.primary}, ${currentTheme.colors.secondary})`
+              }}
+            >
+              🎮 Choose Game Mode
+            </button>
+          )}
+          
+          {/* Mode Selector */}
+          {showModeSelector && (
+            <div className="mb-6">
+              <ModeSelector 
+                selectedMode={selectedMode}
+                onSelectMode={setSelectedMode}
+              />
+            </div>
+          )}
           
           {/* Create room button */}
           <button
@@ -235,30 +265,6 @@ export default function Home() {
           >
             {isJoining ? 'Joining...' : '🚪 Join Room'}
           </button>
-          
-          {/* How to play */}
-          <div 
-            className="mt-8 p-4 rounded-xl transition-all"
-            style={{
-              backgroundColor: currentTheme.colors.primary + '15',
-              borderColor: currentTheme.colors.primary + '30',
-              borderWidth: '2px'
-            }}
-          >
-            <h3 
-              className="font-bold mb-2"
-              style={{ color: currentTheme.colors.primary }}
-            >
-              How to Play:
-            </h3>
-            <ol className="text-sm space-y-1 list-decimal list-inside opacity-90">
-              <li>Someone writes a sentence</li>
-              <li>Next player draws it</li>
-              <li>Next player describes the drawing</li>
-              <li>Repeat until everyone&apos;s done!</li>
-              <li>See the hilarious results! 😂</li>
-            </ol>
-          </div>
         </div>
       </div>
     </>

@@ -1,10 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabase } from '@/lib/supabase'
 import { generateRoomCode, generateColor, generateAvatarSeed } from '@/lib/utils'
+import { GameMode, getGameModeConfig } from '@/types/game'
 
 export async function POST(req: NextRequest) {
   try {
-    const { hostName } = await req.json()
+    const { hostName, gameMode = 'classic' } = await req.json()
     
     if (!hostName || hostName.trim().length === 0) {
       return NextResponse.json({ error: 'Name required' }, { status: 400 })
@@ -25,11 +26,16 @@ export async function POST(req: NextRequest) {
       attempts++
     }
     
+    const modeConfig = getGameModeConfig(gameMode as GameMode)
+    
     const { data: room, error: roomError } = await supabase
       .from('rooms')
       .insert({
         code,
         max_rounds: 6,
+        game_mode: gameMode,
+        max_players: modeConfig.maxPlayers,
+        round_time: modeConfig.defaultRoundTime,
       })
       .select()
       .single()
@@ -44,6 +50,7 @@ export async function POST(req: NextRequest) {
         color: generateColor(),
         is_host: true,
         is_ready: false,
+        is_eliminated: false,
         avatar_seed: generateAvatarSeed()
       })
       .select()

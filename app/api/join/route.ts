@@ -41,6 +41,7 @@ export async function POST(req: NextRequest) {
         color: generateColor(),
         is_host: false,
         is_ready: false,
+        is_eliminated: false,
         avatar_seed: generateAvatarSeed()
       })
       .select()
