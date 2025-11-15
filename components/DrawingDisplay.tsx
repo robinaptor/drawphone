@@ -1,6 +1,4 @@
-// components/DrawingDisplay.tsx - VERSION COMPLÈTE CORRIGÉE
-
-// components/DrawingDisplay.tsx
+// components/DrawingDisplay.tsx - VERSION COMPLÈTE
 
 'use client'
 
@@ -10,38 +8,15 @@ interface DrawingDisplayProps {
   data: any
   width?: number
   height?: number
-  className?: string  // ← AJOUTE CETTE LIGNE
+  className?: string
 }
 
 export default function DrawingDisplay({ 
   data, 
   width = 800, 
   height = 600,
-  className = ''  // ← NOUVEAU
+  className = ''
 }: DrawingDisplayProps) {
-  const canvasRef = useRef<HTMLCanvasElement>(null)
-
-  useEffect(() => {
-    // ... ton code existant
-  }, [data, width, height])
-
-  return (
-    <canvas
-      ref={canvasRef}
-      width={width}
-      height={height}
-      className={`border-2 border-gray-300 rounded-lg bg-white shadow-lg ${className}`}  // ← MODIFIE CETTE LIGNE
-    />
-  )
-}
-
-interface DrawingDisplayProps {
-  data: any
-  width?: number
-  height?: number
-}
-
-export default function DrawingDisplay({ data, width = 800, height = 600 }: DrawingDisplayProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
 
   useEffect(() => {
@@ -71,7 +46,7 @@ export default function DrawingDisplay({ data, width = 800, height = 600 }: Draw
     console.log('Data:', data)
 
     try {
-      // ✅ CAS 1 : String directe (base64)
+      // CAS 1 : String directe (base64)
       if (typeof data === 'string') {
         if (data.startsWith('data:image')) {
           console.log('📷 Type: Direct base64 string')
@@ -94,7 +69,7 @@ export default function DrawingDisplay({ data, width = 800, height = 600 }: Draw
         }
       }
 
-      // ✅ CAS 2 : Object avec imageData
+      // CAS 2 : Object avec imageData
       if (data && typeof data === 'object' && data.imageData) {
         console.log('📷 Type: Object with imageData')
         const img = new Image()
@@ -108,7 +83,7 @@ export default function DrawingDisplay({ data, width = 800, height = 600 }: Draw
         return
       }
 
-      // ✅ CAS 3 : Strokes (mode classique)
+      // CAS 3 : Strokes (mode classique)
       if (data && typeof data === 'object' && data.strokes && Array.isArray(data.strokes)) {
         console.log('✏️ Type: Strokes array')
         data.strokes.forEach((stroke: any) => {
@@ -135,7 +110,7 @@ export default function DrawingDisplay({ data, width = 800, height = 600 }: Draw
         return
       }
 
-      // ✅ CAS 4 : Pixel grid
+      // CAS 4 : Pixel grid
       if (data && typeof data === 'object' && (data.playerGrid || data.originalGrid)) {
         console.log('🎮 Type: Pixel grid')
         const grid = data.playerGrid || data.originalGrid
@@ -150,7 +125,7 @@ export default function DrawingDisplay({ data, width = 800, height = 600 }: Draw
         return
       }
 
-      // ✅ FALLBACK : Format inconnu
+      // FALLBACK : Format inconnu
       console.warn('⚠️ Unknown data format')
       console.log('Available keys:', Object.keys(data))
       
@@ -168,14 +143,14 @@ export default function DrawingDisplay({ data, width = 800, height = 600 }: Draw
       ctx.textAlign = 'center'
       ctx.fillText('Erreur d\'affichage du dessin', canvas.width / 2, canvas.height / 2)
     }
-
   }, [data, width, height])
 
-return (
-  <canvas
-    ref={canvasRef}
-    width={width}
-    height={height}
-    className={`border-2 border-gray-300 rounded-lg bg-white shadow-lg ${className}`}
-  />
-)
+  return (
+    <canvas
+      ref={canvasRef}
+      width={width}
+      height={height}
+      className={`border-2 border-gray-300 rounded-lg bg-white shadow-lg ${className}`}
+    />
+  )
+}
