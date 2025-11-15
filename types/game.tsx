@@ -8,7 +8,7 @@ export interface Room {
      current_round: number
      max_rounds: number
      created_at: string
-   }
+   
    
    export interface Player {
      id: string

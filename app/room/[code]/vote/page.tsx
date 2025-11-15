@@ -13,10 +13,12 @@ export default function VotePage() {
   
   const [room, setRoom] = useState<Room | null>(null)
   const [players, setPlayers] = useState<Player[]>([])
+  const [currentPlayer, setCurrentPlayer] = useState<Player | null>(null)
   const [drawings, setDrawings] = useState<Round[]>([])
   const [selectedRoundId, setSelectedRoundId] = useState<string | null>(null)
   const [hasVoted, setHasVoted] = useState(false)
   const [voteCounts, setVoteCounts] = useState<Map<string, number>>(new Map())
+  const [totalVotes, setTotalVotes] = useState(0)
   const [isSubmitting, setIsSubmitting] = useState(false)
   
   const roomCode = params.code as string
@@ -29,8 +31,14 @@ export default function VotePage() {
     }
     
     loadVotingData()
-    setupRealtimeSubscription()
   }, [playerId])
+  
+  useEffect(() => {
+    if (!room) return
+    
+    const cleanup = setupRealtimeSubscription()
+    return cleanup
+  }, [room?.id])
   
   const loadVotingData = async () => {
     try {
@@ -41,14 +49,30 @@ export default function VotePage() {
         .single()
       
       if (roomError) throw roomError
+      
+      console.log('📊 Room loaded:', roomData)
+      
+      // Si déjà sur results, rediriger
+      if (roomData.status === 'results' || roomData.status === 'finished') {
+        console.log('🏆 Already on results, redirecting...')
+        router.push(`/room/${roomCode}/results`)
+        return
+      }
+      
       setRoom(roomData)
       
       const { data: playersData } = await supabase
         .from('players')
         .select('*')
         .eq('room_id', roomData.id)
+        .order('created_at', { ascending: true })
       
       setPlayers(playersData || [])
+      
+      const current = playersData?.find(p => p.id === playerId)
+      if (current) {
+        setCurrentPlayer(current)
+      }
       
       // Load all drawings (type = 'draw')
       const { data: roundsData } = await supabase
@@ -93,45 +117,92 @@ export default function VotePage() {
     })
     
     setVoteCounts(counts)
+    setTotalVotes(votes?.length || 0)
   }
   
   const setupRealtimeSubscription = () => {
+    console.log('🔌 Setting up vote realtime')
+    
     const channel = supabase
-      .channel(`vote-${roomCode}`)
+      .channel(`vote-${room?.id}`)
       .on(
         'postgres_changes',
         {
           event: '*',
           schema: 'public',
-          table: 'votes'
+          table: 'votes',
+          filter: `room_id=eq.${room?.id}`
         },
         () => {
+          console.log('🗳️ Vote added/changed')
           if (room) {
             loadVoteCounts(room.id)
             checkIfVotingComplete()
           }
         }
       )
-      .subscribe()
+      .on(
+        'postgres_changes',
+        {
+          event: 'UPDATE',
+          schema: 'public',
+          table: 'rooms',
+          filter: `id=eq.${room?.id}`
+        },
+        (payload) => {
+          console.log('🔄 Room updated:', payload.new)
+          const updatedRoom = payload.new as Room
+          
+          if (updatedRoom.status === 'results' || updatedRoom.status === 'finished') {
+            console.log('🏆 Going to results!')
+            router.push(`/room/${roomCode}/results`)
+          }
+        }
+      )
+      .subscribe((status) => {
+        console.log('📡 Vote subscription status:', status)
+      })
     
     return () => {
+      console.log('🔌 Cleaning up vote subscription')
       supabase.removeChannel(channel)
     }
   }
   
   const checkIfVotingComplete = async () => {
-    if (!room) return
+    if (!room || !currentPlayer) return
     
     const { count } = await supabase
       .from('votes')
       .select('*', { count: 'exact', head: true })
       .eq('room_id', room.id)
     
+    console.log(`📊 Votes: ${count} / ${players.length}`)
+    
     if (count === players.length) {
-      // Everyone voted, go to results
-      setTimeout(() => {
-        router.push(`/room/${roomCode}/results`)
-      }, 2000)
+      console.log('✅ Everyone voted!')
+      
+      // Seul le HOST change le status
+      if (currentPlayer.is_host) {
+        console.log('👑 I am host, changing room status to results')
+        
+        try {
+          const { error } = await supabase
+            .from('rooms')
+            .update({ status: 'results' })
+            .eq('id', room.id)
+          
+          if (error) {
+            console.error('Error updating room status:', error)
+          } else {
+            console.log('✅ Room status changed to results')
+          }
+        } catch (error) {
+          console.error('Error:', error)
+        }
+      } else {
+        console.log('👤 I am not host, waiting for redirect via realtime...')
+      }
     }
   }
   
@@ -192,26 +263,33 @@ export default function VotePage() {
             <h2 className="text-3xl font-bold text-gray-800 mb-4">
               Waiting for other players...
             </h2>
-            <p className="text-gray-600 text-xl">
-              {voteCounts.size} / {players.length} players have voted
+            <p className="text-gray-600 text-xl mb-8">
+              {totalVotes} / {players.length} players have voted
             </p>
             
-            <div className="mt-8 flex justify-center gap-2">
-              {players.map(player => {
-                const voted = Array.from(voteCounts.values()).reduce((a, b) => a + b, 0) >= players.indexOf(player) + 1
+            <div className="flex justify-center gap-2 flex-wrap">
+              {players.map((player, index) => {
+                const voted = totalVotes >= index + 1
                 return (
                   <div
                     key={player.id}
-                    className={`w-12 h-12 rounded-full flex items-center justify-center text-white font-bold ${
-                      voted ? 'bg-green-500' : 'bg-gray-300'
+                    className={`w-12 h-12 rounded-full flex items-center justify-center text-white font-bold transition ${
+                      voted ? 'scale-110' : 'opacity-50'
                     }`}
-                    style={{ backgroundColor: voted ? player.color : undefined }}
+                    style={{ backgroundColor: player.color }}
                   >
-                    {player.name.charAt(0)}
+                    {player.name.charAt(0).toUpperCase()}
+                    {voted && <span className="absolute text-2xl">✓</span>}
                   </div>
                 )
               })}
             </div>
+            
+            {totalVotes === players.length && (
+              <div className="mt-8 text-green-600 font-bold text-xl animate-pulse">
+                🎉 Everyone voted! Loading results...
+              </div>
+            )}
           </div>
         </div>
       </div>
