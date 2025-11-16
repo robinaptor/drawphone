@@ -3,24 +3,32 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
-import { Round, Player, Room } from '@/types/game'
 import DrawingDisplay from '@/components/DrawingDisplay'
 import toast, { Toaster } from 'react-hot-toast'
 
-// Type local: les champs nécessaires pour l'écran vote
-type DrawingRound = Pick<
-  Round,
-  'id' | 'room_id' | 'player_id' | 'round_number' | 'content' | 'created_at' | 'type' | 'book_id'
->
+// Juste les champs nécessaires pour l'écran
+type DrawingRoundRow = {
+  id: string
+  room_id: string
+  player_id: string
+  round_number: number
+  content: any
+  created_at: string
+  type: string
+  book_id: string | null
+}
+
+type RoomRow = { id: string; code: string; status: string }
+type PlayerRow = { id: string; room_id: string; name: string; color?: string | null; is_host?: boolean | null }
 
 export default function VotePage() {
   const params = useParams()
   const router = useRouter()
 
-  const [room, setRoom] = useState<Room | null>(null)
-  const [players, setPlayers] = useState<Player[]>([])
-  const [currentPlayer, setCurrentPlayer] = useState<Player | null>(null)
-  const [drawings, setDrawings] = useState<DrawingRound[]>([])
+  const [room, setRoom] = useState<RoomRow | null>(null)
+  const [players, setPlayers] = useState<PlayerRow[]>([])
+  const [currentPlayer, setCurrentPlayer] = useState<PlayerRow | null>(null)
+  const [drawings, setDrawings] = useState<DrawingRoundRow[]>([])
   const [selectedRoundId, setSelectedRoundId] = useState<string | null>(null)
   const [currentRoundNumber, setCurrentRoundNumber] = useState<number | null>(null)
   const [hasVoted, setHasVoted] = useState(false)
@@ -30,10 +38,9 @@ export default function VotePage() {
   const roomCode = params.code as string
   const playerId = typeof window !== 'undefined' ? sessionStorage.getItem('playerId') : null
 
-  // Map rapide id -> nom pour éviter "Unknown"
-  const playersNameMap = useMemo(() => {
+  const nameMap = useMemo(() => {
     const m = new Map<string, string>()
-    for (const p of players) m.set(String(p.id), p.name)
+    players.forEach(p => m.set(String(p.id), p.name))
     return m
   }, [players])
 
@@ -46,7 +53,6 @@ export default function VotePage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [playerId])
 
-  // Poll status + count
   useEffect(() => {
     if (!room) return
     const interval = setInterval(() => {
@@ -59,24 +65,18 @@ export default function VotePage() {
 
   const checkRoomStatus = async () => {
     if (!room) return
-    const { data: roomData } = await supabase
-      .from('rooms')
-      .select('status')
-      .eq('id', room.id)
-      .single()
-
-    if (roomData && (roomData.status === 'results' || roomData.status === 'finished')) {
+    const { data } = await supabase.from('rooms').select('status').eq('id', room.id).single()
+    if (data && (data.status === 'results' || data.status === 'finished')) {
       router.push(`/room/${roomCode}/results`)
     }
   }
 
   const checkVoteCount = async () => {
     if (!room) return
-
     const q = supabase
       .from('votes')
       .select('*', { count: 'exact', head: true })
-      .eq('room_code', room.code)
+      .eq('room_id', room.id)
 
     if (typeof currentRoundNumber === 'number') {
       q.eq('round_number', currentRoundNumber)
@@ -87,26 +87,20 @@ export default function VotePage() {
     setTotalVotes(votesCount)
 
     if (votesCount === players.length && currentPlayer?.is_host) {
-      const { error } = await supabase
-        .from('rooms')
-        .update({ status: 'results' })
-        .eq('id', room.id)
-      if (!error) {
-        setTimeout(() => router.push(`/room/${roomCode}/results`), 800)
-      }
+      const { error } = await supabase.from('rooms').update({ status: 'results' }).eq('id', room.id)
+      if (!error) setTimeout(() => router.push(`/room/${roomCode}/results`), 800)
     }
   }
 
   const loadVotingData = async () => {
     try {
-      // Room
+      // Room by code
       const { data: roomData, error: roomError } = await supabase
         .from('rooms')
-        .select('*')
+        .select('id, code, status')
         .eq('code', roomCode.toUpperCase())
         .single()
       if (roomError) throw roomError
-
       if (roomData.status === 'results' || roomData.status === 'finished') {
         router.push(`/room/${roomCode}/results`)
         return
@@ -116,15 +110,15 @@ export default function VotePage() {
       // Players
       const { data: playersData } = await supabase
         .from('players')
-        .select('*')
+        .select('id, room_id, name, color, is_host')
         .eq('room_id', roomData.id)
         .order('created_at', { ascending: true })
-      setPlayers(playersData || [])
+      setPlayers((playersData as PlayerRow[]) || [])
 
-      const me = playersData?.find(p => String(p.id) === String(playerId)) || null
+      const me = (playersData as PlayerRow[] | null)?.find(p => String(p.id) === String(playerId)) || null
       setCurrentPlayer(me)
 
-      // Drawings (sélectionne explicitement les champs nécessaires)
+      // Drawings (type=draw)
       const { data: roundsData, error: rErr } = await supabase
         .from('rounds')
         .select('id, room_id, player_id, round_number, content, created_at, type, book_id')
@@ -132,42 +126,34 @@ export default function VotePage() {
         .eq('type', 'draw')
         .order('created_at', { ascending: true })
       if (rErr) throw rErr
+      setDrawings((roundsData as DrawingRoundRow[]) || [])
 
-      setDrawings((roundsData as DrawingRound[]) || [])
-
-      // Détermine le round courant (max des round_number)
-      const numbers = ((roundsData as DrawingRound[]) || [])
-        .map(r => r?.round_number)
+      // Round courant = max(round_number)
+      const nums = ((roundsData as DrawingRoundRow[]) || [])
+        .map(r => r.round_number)
         .filter((n): n is number => typeof n === 'number')
-      const roundNumber = numbers.length ? Math.max(...numbers) : null
+      const roundNumber = nums.length ? Math.max(...nums) : null
       setCurrentRoundNumber(roundNumber)
 
-      // Mon vote (room_code + round_number)
-      if (playerId) {
-        const mvq = supabase
+      // Mon vote éventuel (room_id + round_number)
+      if (playerId && roundNumber !== null) {
+        const { data: myVote } = await supabase
           .from('votes')
           .select('*')
-          .eq('room_code', roomData.code)
+          .eq('room_id', roomData.id)
+          .eq('round_number', roundNumber)
           .eq('voter_id', playerId)
-
-        if (typeof roundNumber === 'number') {
-          mvq.eq('round_number', roundNumber)
-        }
-
-        const { data: myVote } = await mvq.maybeSingle()
+          .maybeSingle()
 
         if (myVote) {
           setHasVoted(true)
-          // si round_id existe, sélectionne-le, sinon retrouve via voted_for_id + round_number
           if ((myVote as any).round_id) {
             setSelectedRoundId((myVote as any).round_id)
           } else {
-            const match = ((roundsData as DrawingRound[]) || []).find(
+            const match = ((roundsData as DrawingRoundRow[]) || []).find(
               d =>
                 String(d.player_id) === String((myVote as any).voted_for_id) &&
-                (typeof (myVote as any).round_number === 'number'
-                  ? d.round_number === (myVote as any).round_number
-                  : true)
+                d.round_number === (myVote as any).round_number
             )
             if (match) setSelectedRoundId(match.id)
           }
@@ -178,10 +164,8 @@ export default function VotePage() {
       const cq = supabase
         .from('votes')
         .select('*', { count: 'exact', head: true })
-        .eq('room_code', roomData.code)
-      if (typeof roundNumber === 'number') {
-        cq.eq('round_number', roundNumber)
-      }
+        .eq('room_id', roomData.id)
+      if (roundNumber !== null) cq.eq('round_number', roundNumber)
       const { count } = await cq
       setTotalVotes(count ?? 0)
     } catch (error) {
@@ -194,26 +178,23 @@ export default function VotePage() {
       toast.error('Please select a drawing first')
       return
     }
-
     setIsSubmitting(true)
 
     try {
-      // Dessin sélectionné (depuis l'état)
+      // Récupère le dessin sélectionné (depuis l'état ou refetch minimal)
       let selected = drawings.find(d => d.id === selectedRoundId)
-
-      // Si champs manquants → refetch ciblé
       if (!selected || typeof selected.player_id !== 'string' || typeof selected.round_number !== 'number') {
-        const { data: roundRow, error: rrErr } = await supabase
+        const { data: row, error: rrErr } = await supabase
           .from('rounds')
           .select('id, room_id, player_id, round_number')
           .eq('id', selectedRoundId)
           .single()
         if (rrErr) throw rrErr
-        selected = roundRow as DrawingRound
+        selected = row as DrawingRoundRow
       }
 
-      const votedForId = selected?.player_id
-      const roundNumberFinal = selected?.round_number
+      const roundNumberFinal = selected.round_number
+      const votedForId = selected.player_id
 
       if (!votedForId) {
         toast.error('Missing author for the selected drawing')
@@ -225,19 +206,17 @@ export default function VotePage() {
         setIsSubmitting(false)
         return
       }
-
-      // Empêcher de voter pour soi (optionnel)
       if (String(votedForId) === String(playerId)) {
         toast.error("You can't vote for yourself")
         setIsSubmitting(false)
         return
       }
 
-      // Déjà voté pour CE round ?
+      // Déjà voté pour ce round ?
       const { data: existingVote } = await supabase
         .from('votes')
         .select('*')
-        .eq('room_code', room.code)
+        .eq('room_id', room.id)
         .eq('round_number', roundNumberFinal)
         .eq('voter_id', playerId)
         .maybeSingle()
@@ -249,29 +228,24 @@ export default function VotePage() {
         return
       }
 
-      // Payload complet (aucun champ NULL)
+      // Payload COMPLET (aucun champ null)
       const payload = {
-        room_code: room.code,
+        room_id: room.id,
         round_number: roundNumberFinal,
         voter_id: playerId,
         voted_for_id: votedForId,
-        round_id: selectedRoundId, // si cette colonne existe dans votes
+        round_id: selectedRoundId,
       }
       console.log('🔎 Vote payload:', payload)
 
       const { error } = await supabase.from('votes').insert(payload)
-      if (error) {
-        console.error('Vote error details:', error)
-        throw error
-      }
+      if (error) throw error
 
       setHasVoted(true)
-      setCurrentRoundNumber(prev => (typeof prev === 'number' ? prev : roundNumberFinal))
+      setCurrentRoundNumber(prev => (prev ?? roundNumberFinal))
       toast.success('Vote submitted!')
 
-      setTimeout(() => {
-        checkVoteCount()
-      }, 500)
+      setTimeout(() => checkVoteCount(), 500)
     } catch (error: any) {
       console.error('Error voting:', error)
       toast.error(error?.message || 'Failed to vote')
@@ -280,14 +254,7 @@ export default function VotePage() {
     }
   }
 
-  const getPlayerName = (pid: string) => {
-    const name = playersNameMap.get(String(pid))
-    if (!name) {
-      // aide debug si "Unknown"
-      // console.debug('Unknown player id in drawings:', pid, 'players:', players.map(p => p.id))
-    }
-    return name || 'Unknown'
-  }
+  const getPlayerName = (pid: string) => nameMap.get(String(pid)) || 'Unknown'
 
   if (!room) {
     return (
@@ -299,46 +266,30 @@ export default function VotePage() {
 
   if (hasVoted) {
     const progressPct = players.length ? Math.min(100, (totalVotes / players.length) * 100) : 0
-
     return (
       <div className="min-h-screen bg-gradient-to-br from-purple-500 via-pink-500 to-orange-500 p-4 md:p-8">
         <Toaster position="top-center" />
-
         <div className="max-w-4xl mx-auto text-center">
           <h1 className="text-5xl font-black text-white mb-8">✅ Vote Submitted!</h1>
-
           <div className="bg-white rounded-3xl shadow-2xl p-12">
             <div className="text-6xl mb-6">🎨</div>
             <h2 className="text-3xl font-bold text-gray-800 mb-4">Waiting for other players...</h2>
             <p className="text-gray-600 text-xl mb-8">
               {totalVotes} / {players.length} players have voted
             </p>
-
             <div className="w-full bg-gray-200 rounded-full h-4 mb-8">
-              <div
-                className="bg-gradient-to-r from-green-400 to-blue-500 h-4 rounded-full transition-all duration-500"
-                style={{ width: `${progressPct}%` }}
-              />
+              <div className="bg-gradient-to-r from-green-400 to-blue-500 h-4 rounded-full transition-all duration-500" style={{ width: `${progressPct}%` }} />
             </div>
-
             <div className="flex justify-center gap-3 flex-wrap">
-              {players.map(player => (
-                <div
-                  key={String(player.id)}
-                  className="w-14 h-14 rounded-full flex items-center justify-center text-white font-bold text-lg opacity-40"
-                  style={{ backgroundColor: (player as any).color }}
-                >
-                  {player.name?.charAt(0)?.toUpperCase() ?? '?'}
+              {players.map(p => (
+                <div key={String(p.id)} className="w-14 h-14 rounded-full flex items-center justify-center text-white font-bold text-lg opacity-40" style={{ backgroundColor: p.color || '#666' }}>
+                  {p.name?.charAt(0)?.toUpperCase() ?? '?'}
                 </div>
               ))}
             </div>
-
             {totalVotes === players.length && (
-              <div className="mt-8 text-green-600 font-bold text-2xl animate-bounce">
-                🎉 Everyone voted! Loading results...
-              </div>
+              <div className="mt-8 text-green-600 font-bold text-2xl animate-bounce">🎉 Everyone voted! Loading results...</div>
             )}
-
             <div className="mt-6 text-sm text-gray-400">Checking every 2 seconds...</div>
           </div>
         </div>
@@ -349,37 +300,32 @@ export default function VotePage() {
   return (
     <div className="min-h-screen bg-gradient-to-br from-purple-500 via-pink-500 to-orange-500 p-4 md:p-8">
       <Toaster position="top-center" />
-
       <div className="max-w-6xl mx-auto">
         <div className="text-center mb-8">
           <h1 className="text-5xl font-black text-white mb-4">🎨 Vote for the Best Drawing!</h1>
           <p className="text-white text-xl">Choose your favorite masterpiece</p>
         </div>
-
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 mb-8">
-          {drawings.map(drawing => (
+          {drawings.map(d => (
             <button
-              key={drawing.id}
-              onClick={() => setSelectedRoundId(drawing.id)}
+              key={d.id}
+              onClick={() => setSelectedRoundId(d.id)}
               className={`bg-white rounded-2xl shadow-xl p-6 transition transform hover:scale-105 ${
-                selectedRoundId === drawing.id ? 'ring-4 ring-yellow-400 scale-105' : ''
+                selectedRoundId === d.id ? 'ring-4 ring-yellow-400 scale-105' : ''
               }`}
             >
               <div className="mb-4">
                 <div className="border-4 border-gray-800 rounded-xl overflow-hidden">
-                  <DrawingDisplay data={drawing.content as any} />
+                  <DrawingDisplay data={d.content as any} />
                 </div>
               </div>
-
               <div className="text-center">
-                <div className="font-bold text-gray-800 mb-2">By {getPlayerName(drawing.player_id as any)}</div>
-
-                {selectedRoundId === drawing.id && <div className="text-yellow-500 text-4xl">⭐</div>}
+                <div className="font-bold text-gray-800 mb-2">By {getPlayerName(d.player_id)}</div>
+                {selectedRoundId === d.id && <div className="text-yellow-500 text-4xl">⭐</div>}
               </div>
             </button>
           ))}
         </div>
-
         <div className="flex justify-center">
           <button
             onClick={submitVote}
