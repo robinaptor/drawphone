@@ -7,12 +7,6 @@ import { Round, Player, Room } from '@/types/game'
 import DrawingDisplay from '@/components/DrawingDisplay'
 import toast, { Toaster } from 'react-hot-toast'
 
-// Type local: ce dont on a besoin pour l'écran de vote
-type DrawingRound = Pick<
-  Round,
-  'id' | 'room_id' | 'player_id' | 'round_number' | 'content' | 'created_at' | 'type' | 'book_id'
->
-
 export default function VotePage() {
   const params = useParams()
   const router = useRouter()
@@ -20,9 +14,8 @@ export default function VotePage() {
   const [room, setRoom] = useState<Room | null>(null)
   const [players, setPlayers] = useState<Player[]>([])
   const [currentPlayer, setCurrentPlayer] = useState<Player | null>(null)
-  const [drawings, setDrawings] = useState<DrawingRound[]>([])
+  const [drawings, setDrawings] = useState<Round[]>([])
   const [selectedRoundId, setSelectedRoundId] = useState<string | null>(null)
-  const [currentRoundNumber, setCurrentRoundNumber] = useState<number | null>(null)
   const [hasVoted, setHasVoted] = useState(false)
   const [totalVotes, setTotalVotes] = useState(0)
   const [isSubmitting, setIsSubmitting] = useState(false)
@@ -35,10 +28,11 @@ export default function VotePage() {
       router.push('/')
       return
     }
+    
     loadVotingData()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [playerId])
   
+  // Polling toutes les 2 secondes pour vérifier le status
   useEffect(() => {
     if (!room) return
     
@@ -48,8 +42,7 @@ export default function VotePage() {
     }, 2000)
     
     return () => clearInterval(interval)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [room, currentRoundNumber])
+  }, [room])
   
   const checkRoomStatus = async () => {
     if (!room) return
@@ -61,6 +54,7 @@ export default function VotePage() {
       .single()
     
     if (roomData && (roomData.status === 'results' || roomData.status === 'finished')) {
+      console.log('🏆 Room status changed to results, redirecting...')
       router.push(`/room/${roomCode}/results`)
     }
   }
@@ -68,28 +62,31 @@ export default function VotePage() {
   const checkVoteCount = async () => {
     if (!room) return
     
-    const query = supabase
+    const { count } = await supabase
       .from('votes')
       .select('*', { count: 'exact', head: true })
-      .eq('room_code', room.code)
-    if (typeof currentRoundNumber === 'number') {
-      query.eq('round_number', currentRoundNumber)
-    }
-    const { count } = await query
+      .eq('room_id', room.id)
     
-    const votesCount = count ?? 0
-    setTotalVotes(votesCount)
+    setTotalVotes(count || 0)
     
-    if (votesCount === players.length && currentPlayer?.is_host) {
+    console.log(`📊 Votes: ${count} / ${players.length}`)
+    
+    if (count === players.length && currentPlayer?.is_host) {
+      console.log('✅ Everyone voted! Host changing status...')
+      
       const { error } = await supabase
         .from('rooms')
         .update({ status: 'results' })
         .eq('id', room.id)
       
-      if (!error) {
+      if (error) {
+        console.error('Error updating room status:', error)
+      } else {
+        console.log('✅ Status changed to results')
+        // Rediriger immédiatement le host aussi
         setTimeout(() => {
           router.push(`/room/${roomCode}/results`)
-        }, 800)
+        }, 1000)
       }
     }
   }
@@ -104,7 +101,10 @@ export default function VotePage() {
       
       if (roomError) throw roomError
       
+      console.log('📊 Room loaded:', roomData)
+      
       if (roomData.status === 'results' || roomData.status === 'finished') {
+        console.log('🏆 Already on results, redirecting...')
         router.push(`/room/${roomCode}/results`)
         return
       }
@@ -119,65 +119,38 @@ export default function VotePage() {
       
       setPlayers(playersData || [])
       
-      const current = playersData?.find(p => p.id === playerId) || null
-      setCurrentPlayer(current)
+      const current = playersData?.find(p => p.id === playerId)
+      if (current) {
+        setCurrentPlayer(current)
+      }
       
-      // Récupère tous les champs nécessaires au type DrawingRound
       const { data: roundsData } = await supabase
         .from('rounds')
-        .select('id, room_id, player_id, round_number, content, created_at, type, book_id')
+        .select('*')
         .eq('room_id', roomData.id)
         .eq('type', 'draw')
         .order('created_at', { ascending: true })
       
-      setDrawings((roundsData as DrawingRound[]) || [])
+      setDrawings(roundsData || [])
       
-      // Déterminer le round courant (max des round_number)
-      const numbers = ((roundsData as DrawingRound[]) || [])
-        .map(r => r?.round_number)
-        .filter((n): n is number => typeof n === 'number')
-      const roundNumber = numbers.length ? Math.max(...numbers) : null
-      setCurrentRoundNumber(roundNumber)
+      const { data: myVote } = await supabase
+        .from('votes')
+        .select('*')
+        .eq('room_id', roomData.id)
+        .eq('voter_id', playerId)
+        .single()
       
-      // Mon vote éventuel (room_code + round_number)
-      if (playerId) {
-        const mvq = supabase
-          .from('votes')
-          .select('*')
-          .eq('room_code', roomData.code)
-          .eq('voter_id', playerId)
-        if (typeof roundNumber === 'number') {
-          mvq.eq('round_number', roundNumber)
-        }
-        const { data: myVote } = await mvq.maybeSingle()
-        
-        if (myVote) {
-          setHasVoted(true)
-          // Utilise round_id si dispo, sinon retrouve via voted_for_id + round_number
-          if ((myVote as any).round_id) {
-            setSelectedRoundId((myVote as any).round_id)
-          } else {
-            const match = ((roundsData as DrawingRound[]) || []).find(d =>
-              d.player_id === (myVote as any).voted_for_id &&
-              (typeof (myVote as any).round_number === 'number'
-                ? d.round_number === (myVote as any).round_number
-                : true)
-            )
-            if (match) setSelectedRoundId(match.id)
-          }
-        }
+      if (myVote) {
+        setHasVoted(true)
+        setSelectedRoundId(myVote.round_id)
       }
       
-      // Compte initial (room_code + round_number)
-      const cq = supabase
+      const { count } = await supabase
         .from('votes')
         .select('*', { count: 'exact', head: true })
-        .eq('room_code', roomData.code)
-      if (typeof roundNumber === 'number') {
-        cq.eq('round_number', roundNumber)
-      }
-      const { count } = await cq
-      setTotalVotes(count ?? 0)
+        .eq('room_id', roomData.id)
+      
+      setTotalVotes(count || 0)
       
     } catch (error) {
       console.error('Error loading voting data:', error)
@@ -185,92 +158,32 @@ export default function VotePage() {
   }
   
   const submitVote = async () => {
-    if (!selectedRoundId || !room || !playerId) {
-      toast.error('Please select a drawing first')
-      return
-    }
+    if (!selectedRoundId || !room || !playerId) return
     
     setIsSubmitting(true)
     
     try {
-      // D'abord, essaye depuis l'état
-      let selected = drawings.find(d => d.id === selectedRoundId)
-      
-      // Si champs manquants => refetch ciblé
-      if (!selected || typeof selected.player_id !== 'string' || typeof selected.round_number !== 'number') {
-        const { data: roundRow, error: rrErr } = await supabase
-          .from('rounds')
-          .select('id, room_id, player_id, round_number, content, created_at, type, book_id')
-          .eq('id', selectedRoundId)
-          .single()
-        if (rrErr) throw rrErr
-        selected = roundRow as DrawingRound
-      }
-      
-      const votedForId = selected?.player_id
-      const roundNumberFinal = selected?.round_number
-      
-      if (!votedForId) {
-        toast.error('Missing author for the selected drawing')
-        setIsSubmitting(false)
-        return
-      }
-      if (typeof roundNumberFinal !== 'number') {
-        toast.error('Missing round number for the selected drawing')
-        setIsSubmitting(false)
-        return
-      }
-      
-      // Empêche de voter pour soi (optionnel)
-      if (votedForId === playerId) {
-        toast.error("You can't vote for yourself")
-        setIsSubmitting(false)
-        return
-      }
-      
-      // Déjà voté pour CE round ?
-      const { data: existingVote } = await supabase
+      const { error } = await supabase
         .from('votes')
-        .select('*')
-        .eq('room_code', room.code)
-        .eq('round_number', roundNumberFinal)
-        .eq('voter_id', playerId)
-        .maybeSingle()
+        .insert({
+          room_id: room.id,
+          voter_id: playerId,
+          round_id: selectedRoundId
+        })
       
-      if (existingVote) {
-        toast.error('You already voted!')
-        setHasVoted(true)
-        setIsSubmitting(false)
-        return
-      }
-      
-      // Payload complet (aucune valeur null)
-      const payload = {
-        room_code: room.code,
-        round_number: roundNumberFinal,
-        voter_id: playerId,
-        voted_for_id: votedForId,
-        round_id: selectedRoundId, // si la colonne existe dans ta table
-      }
-      console.log('🔎 Vote payload:', payload)
-      
-      const { error } = await supabase.from('votes').insert(payload)
-      if (error) {
-        console.error('Vote error details:', error)
-        throw error
-      }
+      if (error) throw error
       
       setHasVoted(true)
-      setCurrentRoundNumber(prev => (typeof prev === 'number' ? prev : roundNumberFinal))
       toast.success('Vote submitted!')
       
+      // Recheck immédiatement après vote
       setTimeout(() => {
         checkVoteCount()
       }, 500)
       
-    } catch (error: any) {
+    } catch (error) {
       console.error('Error voting:', error)
-      toast.error(error?.message || 'Failed to vote')
+      toast.error('Failed to vote')
     } finally {
       setIsSubmitting(false)
     }
@@ -289,8 +202,6 @@ export default function VotePage() {
   }
   
   if (hasVoted) {
-    const progressPct = players.length ? Math.min(100, (totalVotes / players.length) * 100) : 0
-
     return (
       <div className="min-h-screen bg-gradient-to-br from-purple-500 via-pink-500 to-orange-500 p-4 md:p-8">
         <Toaster position="top-center" />
@@ -312,20 +223,25 @@ export default function VotePage() {
             <div className="w-full bg-gray-200 rounded-full h-4 mb-8">
               <div 
                 className="bg-gradient-to-r from-green-400 to-blue-500 h-4 rounded-full transition-all duration-500"
-                style={{ width: `${progressPct}%` }}
+                style={{ width: `${(totalVotes / players.length) * 100}%` }}
               />
             </div>
             
             <div className="flex justify-center gap-3 flex-wrap">
-              {players.map((player) => (
-                <div
-                  key={player.id}
-                  className="w-14 h-14 rounded-full flex items-center justify-center text-white font-bold text-lg opacity-40"
-                  style={{ backgroundColor: player.color }}
-                >
-                  {player.name.charAt(0).toUpperCase()}
-                </div>
-              ))}
+              {players.map((player) => {
+                const playerVoted = totalVotes > 0
+                return (
+                  <div
+                    key={player.id}
+                    className={`w-14 h-14 rounded-full flex items-center justify-center text-white font-bold text-lg transition-all ${
+                      playerVoted ? 'scale-110 ring-4 ring-green-400' : 'opacity-40'
+                    }`}
+                    style={{ backgroundColor: player.color }}
+                  >
+                    {player.name.charAt(0).toUpperCase()}
+                  </div>
+                )
+              })}
             </div>
             
             {totalVotes === players.length && (
