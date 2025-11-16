@@ -131,11 +131,11 @@ export default function VotePage() {
       
       const { data: roundsData } = await supabase
         .from('rounds')
-        .select('*')
+        .select('id, player_id, round_number, content, created_at, type') // IMPORTANT
         .eq('room_id', roomData.id)
         .eq('type', 'draw')
         .order('created_at', { ascending: true })
-      
+
       setDrawings(roundsData || [])
       
       // Déterminer le numéro de round courant (max des dessins)
@@ -195,51 +195,45 @@ export default function VotePage() {
       toast.error('Please select a drawing first')
       return
     }
-    
+  
     setIsSubmitting(true)
-    
+  
     try {
-      // Récupère le dessin sélectionné pour obtenir player_id et round_number
-      const selected = (drawings as any[]).find(d => d.id === selectedRoundId)
-      if (!selected) {
-        toast.error('Selected drawing not found')
-        setIsSubmitting(false)
-        return
-      }
-      const selectedRoundNumber: number | undefined =
-        typeof selected.round_number === 'number' ? selected.round_number : undefined
-      const votedForId: string | undefined = selected.player_id
-      
-      // Fallback round_number si pas chargé
-      let roundNumberFinal = selectedRoundNumber
-      if (typeof roundNumberFinal !== 'number') {
+      // Récupère le dessin sélectionné
+      let selected: any = (drawings as any[]).find(d => d.id === selectedRoundId)
+  
+      // Si on ne l’a pas en mémoire ou champs manquants → refetch précis
+      if (!selected || typeof selected.player_id !== 'string' || typeof selected.round_number !== 'number') {
         const { data: roundRow, error: rrErr } = await supabase
           .from('rounds')
-          .select('round_number, player_id')
+          .select('id, player_id, round_number')
           .eq('id', selectedRoundId)
           .single()
         if (rrErr) throw rrErr
-        roundNumberFinal = (roundRow as any)?.round_number
+        selected = roundRow
       }
-      
-      if (typeof roundNumberFinal !== 'number') {
-        toast.error('Missing round number for the selected drawing')
-        setIsSubmitting(false)
-        return
-      }
+  
+      const votedForId: string | undefined = selected?.player_id
+      const roundNumberFinal: number | undefined = selected?.round_number
+  
       if (!votedForId) {
         toast.error('Missing author for the selected drawing')
         setIsSubmitting(false)
         return
       }
-      
-      // Empêcher de voter pour soi (optionnel)
+      if (typeof roundNumberFinal !== 'number') {
+        toast.error('Missing round number for the selected drawing')
+        setIsSubmitting(false)
+        return
+      }
+  
+      // Optionnel: empêcher de voter pour soi
       if (votedForId === playerId) {
         toast.error("You can't vote for yourself")
         setIsSubmitting(false)
         return
       }
-      
+  
       // Déjà voté pour CE round ?
       const { data: existingVote } = await supabase
         .from('votes')
@@ -248,41 +242,45 @@ export default function VotePage() {
         .eq('round_number', roundNumberFinal)
         .eq('voter_id', playerId)
         .maybeSingle()
-      
+  
       if (existingVote) {
         toast.error('You already voted!')
         setHasVoted(true)
         setIsSubmitting(false)
         return
       }
-      
-      // Insérer le vote: room_code + round_number + voter_id + voted_for_id (+ round_id si tu veux le garder)
+  
+      // Log pour vérifier qu’il n’y a aucun null
+      const payload = {
+        room_code: room.code,
+        round_number: roundNumberFinal,
+        voter_id: playerId,
+        voted_for_id: votedForId,
+        round_id: selectedRoundId, // si la colonne existe
+      }
+      console.log('🔎 Vote payload:', payload)
+  
+      // Insert du vote
       const { error } = await supabase
         .from('votes')
-        .insert({
-          room_code: room.code,
-          round_number: roundNumberFinal,
-          voter_id: playerId,
-          voted_for_id: votedForId,
-          round_id: selectedRoundId, // optionnel si ta table l’accepte
-        })
-      
+        .insert(payload)
+  
       if (error) {
         console.error('Vote error details:', error)
         throw error
       }
-      
+  
       setHasVoted(true)
-      setCurrentRoundNumber(prev => (typeof prev === 'number' ? prev : roundNumberFinal!))
+      setCurrentRoundNumber(prev => (typeof prev === 'number' ? prev : roundNumberFinal))
       toast.success('Vote submitted!')
-      
+  
       setTimeout(() => {
         checkVoteCount()
       }, 500)
-      
+  
     } catch (error: any) {
       console.error('Error voting:', error)
-      toast.error(error.message || 'Failed to vote')
+      toast.error(error?.message || 'Failed to vote')
     } finally {
       setIsSubmitting(false)
     }
