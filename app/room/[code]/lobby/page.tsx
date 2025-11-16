@@ -8,6 +8,13 @@ import { PlayerList } from '@/components/PlayerList'
 import { GameSettings } from '@/components/GameSettings'
 import { Chat } from '@/components/Chat'
 import toast, { Toaster } from 'react-hot-toast'
+import { GameMode, GAME_MODE_CONFIGS } from '@/types/game'
+
+// Helper safe pour récupérer la config d’un mode
+function getModeConfig(mode?: string) {
+  const key = (mode as GameMode) || 'classic'
+  return GAME_MODE_CONFIGS[key] ?? GAME_MODE_CONFIGS['classic']
+}
 
 export default function LobbyPage() {
   const params = useParams()
@@ -61,7 +68,7 @@ export default function LobbyPage() {
       const current = playersData.find(p => p.id === playerId)
       if (current) {
         setLocalCurrentPlayer(current)
-        setIsReady(!!current.is_ready) // force en boolean
+        setIsReady(!!current.is_ready)
       }
     } catch (error) {
       console.error('Error loading room:', error)
@@ -131,7 +138,7 @@ export default function LobbyPage() {
           
           if (updatedPlayer.id === playerId) {
             setLocalCurrentPlayer(updatedPlayer)
-            setIsReady(!!updatedPlayer.is_ready) // force en boolean
+            setIsReady(!!updatedPlayer.is_ready)
           }
         }
       )
@@ -242,8 +249,9 @@ export default function LobbyPage() {
     )
   }
   
-  const allReady = players.every(p => p.is_ready || p.is_host)
-  const canStart = currentPlayer.is_host && players.length >= 3 && allReady
+  const allReady = players.every(p => (p.is_ready ?? false) || p.is_host)
+  const modeConfig = getModeConfig(room.game_mode)
+  const canStart = currentPlayer.is_host && players.length >= modeConfig.minPlayers && allReady
   
   return (
     <div className="min-h-screen bg-gradient-to-br from-purple-500 via-pink-500 to-orange-500 p-4 md:p-8">
