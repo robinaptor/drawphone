@@ -14,7 +14,7 @@ type Body = {
 }
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL!
-const SUPABASE_KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY! // même projet que le client
+const SUPABASE_KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
 
 function randomCode(len = 4) {
   const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'
@@ -43,7 +43,6 @@ export async function POST(req: Request) {
     const hostName = (body.hostName || 'Host').toString().trim().slice(0, 24) || 'Host'
     const hostColor = body.color || randomColor()
     const codeLen = Math.max(3, Math.min(8, Number(body.codeLength) || 4))
-    // const gameMode = (body.gameMode || 'classic').toString() // si tu as une colonne, tu pourras la stocker
 
     // Génère un code unique
     let code = ''
@@ -73,24 +72,34 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: 'DB error creating room', details: roomErr?.message }, { status: 500 })
     }
 
-    // Génère l’ID du host ici pour éviter le NOT NULL
+    // Génère l'ID du host
     const playerId = randomUUID()
 
-    // Crée le host (note: on fournit id nous-mêmes)
+    // Crée le host
     const { data: player, error: playerErr } = await supabase
       .from('players')
-      .insert({ id: playerId, room_id: room.id, name: hostName, color: hostColor, is_host: true })
-      .select('id, room_id, name, color, is_host')
+      .insert({
+        id: playerId,
+        room_id: room.id,
+        room_code: room.code,
+        name: hostName,
+        color: hostColor,
+        is_host: true
+      })
+      .select('id, room_id, room_code, name, color, is_host')
       .maybeSingle()
 
     if (playerErr || !player) {
-      // rollback si host KO
+      console.error('Create host error:', playerErr)
       await supabase.from('rooms').delete().eq('id', room.id)
       return NextResponse.json({ error: 'DB error creating host', details: playerErr?.message }, { status: 500 })
     }
 
+    console.log('✅ Room created:', room.code, 'Host:', player.name, player.id)
+
     return NextResponse.json({ room, player }, { status: 201 })
   } catch (err: any) {
+    console.error('Rooms API crash:', err)
     return NextResponse.json({ error: err?.message ?? 'Internal error' }, { status: 500 })
   }
 }
