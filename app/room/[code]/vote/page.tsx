@@ -32,7 +32,6 @@ export default function VotePage() {
     loadVotingData()
   }, [playerId])
   
-  // Polling toutes les 2 secondes pour vérifier le status
   useEffect(() => {
     if (!room) return
     
@@ -83,7 +82,6 @@ export default function VotePage() {
         console.error('Error updating room status:', error)
       } else {
         console.log('✅ Status changed to results')
-        // Rediriger immédiatement le host aussi
         setTimeout(() => {
           router.push(`/room/${roomCode}/results`)
         }, 1000)
@@ -166,7 +164,6 @@ export default function VotePage() {
     setIsSubmitting(true)
     
     try {
-      // Vérifier si l'utilisateur a déjà voté
       const { data: existingVote } = await supabase
         .from('votes')
         .select('*')
@@ -181,7 +178,6 @@ export default function VotePage() {
         return
       }
       
-      // Insérer le vote
       const { error } = await supabase
         .from('votes')
         .insert({
@@ -198,7 +194,6 @@ export default function VotePage() {
       setHasVoted(true)
       toast.success('Vote submitted!')
       
-      // Recheck immédiatement après vote
       setTimeout(() => {
         checkVoteCount()
       }, 500)
@@ -250,20 +245,15 @@ export default function VotePage() {
             </div>
             
             <div className="flex justify-center gap-3 flex-wrap">
-              {players.map((player) => {
-                const playerVoted = totalVotes > 0
-                return (
-                  <div
-                    key={player.id}
-                    className={`w-14 h-14 rounded-full flex items-center justify-center text-white font-bold text-lg transition-all ${
-                      playerVoted ? 'scale-110 ring-4 ring-green-400' : 'opacity-40'
-                    }`}
-                    style={{ backgroundColor: player.color }}
-                  >
-                    {player.name.charAt(0).toUpperCase()}
-                  </div>
-                )
-              })}
+              {players.map((player) => (
+                <div
+                  key={player.id}
+                  className="w-14 h-14 rounded-full flex items-center justify-center text-white font-bold text-lg opacity-40"
+                  style={{ backgroundColor: player.color }}
+                >
+                  {player.name.charAt(0).toUpperCase()}
+                </div>
+              ))}
             </div>
             
             {totalVotes === players.length && (
