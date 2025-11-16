@@ -24,31 +24,43 @@ export default function Home() {
       toast.error('Please enter your name')
       return
     }
-    
+  
     setIsCreating(true)
-    
+  
     try {
       const res = await fetch('/api/rooms', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ 
+        body: JSON.stringify({
           hostName: name.trim(),
-          gameMode: selectedMode  // ← AJOUTE CETTE LIGNE
-        })
+          gameMode: selectedMode,
+        }),
       })
-      
-      if (!res.ok) throw new Error('Failed to create room')
-      
-      const data = await res.json()
-      
-      sessionStorage.setItem('playerId', data.player.id)
-      sessionStorage.setItem('playerName', data.player.name)
-      sessionStorage.setItem('roomId', data.room.id)
-      
-      router.push(`/room/${data.room.code}/lobby`)
-    } catch (error) {
-      toast.error('Failed to create room')
-      console.error(error)
+  
+      const json = await res.json().catch(() => ({}))
+      if (!res.ok) {
+        console.error('Create room failed:', json)
+        toast.error(json?.error ? `${json.error}${json?.details ? `: ${json.details}` : ''}` : 'Failed to create room')
+        return
+      }
+  
+      // Supporte les 2 formats {player} ou {host}
+      const player = json.player || json.host
+      const room = json.room
+      if (!player || !room) {
+        console.error('Unexpected response shape:', json)
+        toast.error('Unexpected server response')
+        return
+      }
+  
+      sessionStorage.setItem('playerId', player.id)
+      sessionStorage.setItem('playerName', player.name)
+      sessionStorage.setItem('roomId', room.id)
+  
+      router.push(`/room/${room.code}/lobby`)
+    } catch (error: any) {
+      console.error('Create room crash:', error)
+      toast.error(error?.message || 'Failed to create room')
     } finally {
       setIsCreating(false)
     }

@@ -1,3 +1,4 @@
+// app/api/rooms/route.ts
 import { NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
 
@@ -8,6 +9,7 @@ type Body = {
   hostName?: string
   color?: string
   codeLength?: number
+  gameMode?: string
 }
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL!
@@ -23,10 +25,6 @@ function randomCode(len = 4) {
 function randomColor() {
   const palette = ['#e74c3c','#3498db','#2ecc71','#f1c40f','#9b59b6','#e67e22','#1abc9c','#fd79a8','#6c5ce7','#16a085']
   return palette[Math.floor(Math.random() * palette.length)]
-}
-
-export async function OPTIONS() {
-  return NextResponse.json({ ok: true })
 }
 
 export async function POST(req: Request) {
@@ -47,8 +45,9 @@ export async function POST(req: Request) {
     const hostName = (body.hostName || 'Host').toString().trim().slice(0, 24) || 'Host'
     const hostColor = body.color || randomColor()
     const codeLen = Math.max(3, Math.min(8, Number(body.codeLength) || 4))
+    const gameMode = (body.gameMode || 'classic').toString()
 
-    // Générer un code unique (max 12 essais)
+    // Génère un code unique (max 12 essais)
     let code = ''
     for (let i = 0; i < 12; i++) {
       code = randomCode(codeLen)
@@ -67,10 +66,10 @@ export async function POST(req: Request) {
       }
     }
 
-    // Insérer la room
+    // Insère la room (si la colonne game_mode n’existe pas, c’est ignoré)
     const { data: roomIns, error: roomErr } = await supabase
       .from('rooms')
-      .insert({ code, status: 'lobby' })
+      .insert({ code, status: 'lobby', game_mode: gameMode } as any)
       .select('id, code, status, created_at')
       .maybeSingle()
 
@@ -78,8 +77,10 @@ export async function POST(req: Request) {
       console.error('Create room error:', roomErr)
       return NextResponse.json({ error: 'DB error creating room', details: roomErr.message }, { status: 500 })
     }
-    if (!roomIns) {
-      // Cas RLS: insert ok mais returning bloqué → refetch par code
+
+    let room = roomIns
+    if (!room) {
+      // Fallback (cas RLS): refetch
       const { data: roomFetch, error: rfErr } = await supabase
         .from('rooms')
         .select('id, code, status, created_at')
@@ -89,34 +90,23 @@ export async function POST(req: Request) {
         console.error('Fetch room after insert error:', rfErr)
         return NextResponse.json({ error: 'Room created but cannot read it', details: rfErr.message }, { status: 500 })
       }
-      // Crée le host avec roomFetch
-      const { data: host2, error: hostErr2 } = await supabase
-        .from('players')
-        .insert({ room_id: roomFetch.id, name: hostName, color: hostColor, is_host: true })
-        .select('id, room_id, name, color, is_host, created_at')
-        .maybeSingle()
-      if (hostErr2) {
-        console.error('Create host error (fallback):', hostErr2)
-        await supabase.from('rooms').delete().eq('id', roomFetch.id)
-        return NextResponse.json({ error: 'DB error creating host', details: hostErr2.message }, { status: 500 })
-      }
-      return NextResponse.json({ room: roomFetch, host: host2 }, { status: 201 })
+      room = roomFetch
     }
 
-    // Insérer le host
+    // Crée le host (player)
     const { data: player, error: playerErr } = await supabase
       .from('players')
-      .insert({ room_id: roomIns.id, name: hostName, color: hostColor, is_host: true })
+      .insert({ room_id: room.id, name: hostName, color: hostColor, is_host: true })
       .select('id, room_id, name, color, is_host, created_at')
       .maybeSingle()
 
     if (playerErr) {
       console.error('Create host error:', playerErr)
-      await supabase.from('rooms').delete().eq('id', roomIns.id) // rollback
+      await supabase.from('rooms').delete().eq('id', room.id)
       return NextResponse.json({ error: 'DB error creating host', details: playerErr.message }, { status: 500 })
     }
 
-    return NextResponse.json({ room: roomIns, host: player }, { status: 201 })
+    return NextResponse.json({ room, player }, { status: 201 })
   } catch (err: any) {
     console.error('Rooms API crash:', err)
     return NextResponse.json({ error: err?.message ?? 'Internal error' }, { status: 500 })
