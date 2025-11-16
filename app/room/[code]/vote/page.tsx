@@ -6,7 +6,9 @@ import { supabase } from '@/lib/supabase'
 import DrawingDisplay from '@/components/DrawingDisplay'
 import toast, { Toaster } from 'react-hot-toast'
 
-// Juste les champs nécessaires pour l'écran
+// Types locaux minimum pour cette page
+type RoomRow = { id: string; code: string; status: string }
+type PlayerRow = { id: string; room_id: string; name: string; color?: string | null; is_host?: boolean | null }
 type DrawingRoundRow = {
   id: string
   room_id: string
@@ -17,9 +19,6 @@ type DrawingRoundRow = {
   type: string
   book_id: string | null
 }
-
-type RoomRow = { id: string; code: string; status: string }
-type PlayerRow = { id: string; room_id: string; name: string; color?: string | null; is_host?: boolean | null }
 
 export default function VotePage() {
   const params = useParams()
@@ -33,14 +32,16 @@ export default function VotePage() {
   const [currentRoundNumber, setCurrentRoundNumber] = useState<number | null>(null)
   const [hasVoted, setHasVoted] = useState(false)
   const [totalVotes, setTotalVotes] = useState(0)
+  const [totalPlayers, setTotalPlayers] = useState(0)
   const [isSubmitting, setIsSubmitting] = useState(false)
 
   const roomCode = params.code as string
   const playerId = typeof window !== 'undefined' ? sessionStorage.getItem('playerId') : null
 
+  // Map id -> nom pour éviter "Unknown"
   const nameMap = useMemo(() => {
     const m = new Map<string, string>()
-    players.forEach(p => m.set(String(p.id), p.name))
+    for (const p of players) m.set(String(p.id), p.name)
     return m
   }, [players])
 
@@ -53,6 +54,7 @@ export default function VotePage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [playerId])
 
+  // Poll status + count toutes les 2s
   useEffect(() => {
     if (!room) return
     const interval = setInterval(() => {
@@ -61,7 +63,7 @@ export default function VotePage() {
     }, 2000)
     return () => clearInterval(interval)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [room, currentRoundNumber, players.length, currentPlayer?.is_host])
+  }, [room, currentRoundNumber, currentPlayer?.is_host])
 
   const checkRoomStatus = async () => {
     if (!room) return
@@ -73,20 +75,26 @@ export default function VotePage() {
 
   const checkVoteCount = async () => {
     if (!room) return
-    const q = supabase
+
+    // Votes du round courant (si connu), sinon tous les votes de la room
+    const vq = supabase
       .from('votes')
       .select('*', { count: 'exact', head: true })
       .eq('room_id', room.id)
-
-    if (typeof currentRoundNumber === 'number') {
-      q.eq('round_number', currentRoundNumber)
-    }
-
-    const { count } = await q
-    const votesCount = count ?? 0
+    if (typeof currentRoundNumber === 'number') vq.eq('round_number', currentRoundNumber)
+    const { count: votesRaw } = await vq
+    const votesCount = votesRaw ?? 0
     setTotalVotes(votesCount)
 
-    if (votesCount === players.length && currentPlayer?.is_host) {
+    // Nombre de joueurs (count DB, plus fiable que players.length)
+    const { count: playersRaw } = await supabase
+      .from('players')
+      .select('*', { count: 'exact', head: true })
+      .eq('room_id', room.id)
+    const playersCount = playersRaw ?? 0
+    setTotalPlayers(playersCount)
+
+    if (playersCount > 0 && votesCount >= playersCount && currentPlayer?.is_host) {
       const { error } = await supabase.from('rooms').update({ status: 'results' }).eq('id', room.id)
       if (!error) setTimeout(() => router.push(`/room/${roomCode}/results`), 800)
     }
@@ -94,13 +102,14 @@ export default function VotePage() {
 
   const loadVotingData = async () => {
     try {
-      // Room by code
+      // Room
       const { data: roomData, error: roomError } = await supabase
         .from('rooms')
         .select('id, code, status')
         .eq('code', roomCode.toUpperCase())
         .single()
       if (roomError) throw roomError
+
       if (roomData.status === 'results' || roomData.status === 'finished') {
         router.push(`/room/${roomCode}/results`)
         return
@@ -118,7 +127,14 @@ export default function VotePage() {
       const me = (playersData as PlayerRow[] | null)?.find(p => String(p.id) === String(playerId)) || null
       setCurrentPlayer(me)
 
-      // Drawings (type=draw)
+      // Nombre de joueurs (count DB)
+      const { count: playersCount } = await supabase
+        .from('players')
+        .select('*', { count: 'exact', head: true })
+        .eq('room_id', roomData.id)
+      setTotalPlayers(playersCount ?? (playersData?.length ?? 0))
+
+      // Drawings (type = draw)
       const { data: roundsData, error: rErr } = await supabase
         .from('rounds')
         .select('id, room_id, player_id, round_number, content, created_at, type, book_id')
@@ -126,46 +142,40 @@ export default function VotePage() {
         .eq('type', 'draw')
         .order('created_at', { ascending: true })
       if (rErr) throw rErr
-      setDrawings((roundsData as DrawingRoundRow[]) || [])
+      const drawingsRows = (roundsData as DrawingRoundRow[]) || []
+      setDrawings(drawingsRows)
 
       // Round courant = max(round_number)
-      const nums = ((roundsData as DrawingRoundRow[]) || [])
-        .map(r => r.round_number)
-        .filter((n): n is number => typeof n === 'number')
+      const nums = drawingsRows.map(r => r.round_number).filter((n): n is number => typeof n === 'number')
       const roundNumber = nums.length ? Math.max(...nums) : null
       setCurrentRoundNumber(roundNumber)
 
-      // Mon vote éventuel (room_id + round_number)
-      if (playerId && roundNumber !== null) {
-        const { data: myVote } = await supabase
-          .from('votes')
-          .select('*')
-          .eq('room_id', roomData.id)
-          .eq('round_number', roundNumber)
-          .eq('voter_id', playerId)
-          .maybeSingle()
+      // Mon vote (room_id + round_number si connu)
+      if (playerId) {
+        const mvq = supabase.from('votes').select('*').eq('room_id', roomData.id).eq('voter_id', playerId)
+        if (typeof roundNumber === 'number') mvq.eq('round_number', roundNumber)
+        const { data: myVote } = await mvq.maybeSingle()
 
         if (myVote) {
           setHasVoted(true)
           if ((myVote as any).round_id) {
             setSelectedRoundId((myVote as any).round_id)
           } else {
-            const match = ((roundsData as DrawingRoundRow[]) || []).find(
+            const match = drawingsRows.find(
               d =>
                 String(d.player_id) === String((myVote as any).voted_for_id) &&
-                d.round_number === (myVote as any).round_number
+                (typeof (myVote as any).round_number === 'number'
+                  ? d.round_number === (myVote as any).round_number
+                  : true)
             )
             if (match) setSelectedRoundId(match.id)
           }
         }
       }
 
-      // Count initial
-      const cq = supabase
-        .from('votes')
-        .select('*', { count: 'exact', head: true })
-        .eq('room_id', roomData.id)
-      if (roundNumber !== null) cq.eq('round_number', roundNumber)
+      // Compte initial des votes
+      const cq = supabase.from('votes').select('*', { count: 'exact', head: true }).eq('room_id', roomData.id)
+      if (typeof roundNumber === 'number') cq.eq('round_number', roundNumber)
       const { count } = await cq
       setTotalVotes(count ?? 0)
     } catch (error) {
@@ -181,7 +191,7 @@ export default function VotePage() {
     setIsSubmitting(true)
 
     try {
-      // Récupère le dessin sélectionné (depuis l'état ou refetch minimal)
+      // Dessin sélectionné en mémoire, sinon refetch minimal
       let selected = drawings.find(d => d.id === selectedRoundId)
       if (!selected || typeof selected.player_id !== 'string' || typeof selected.round_number !== 'number') {
         const { data: row, error: rrErr } = await supabase
@@ -220,7 +230,6 @@ export default function VotePage() {
         .eq('round_number', roundNumberFinal)
         .eq('voter_id', playerId)
         .maybeSingle()
-
       if (existingVote) {
         toast.error('You already voted!')
         setHasVoted(true)
@@ -228,7 +237,7 @@ export default function VotePage() {
         return
       }
 
-      // Payload COMPLET (aucun champ null)
+      // Insert complet (aucun champ null)
       const payload = {
         room_id: room.id,
         round_number: roundNumberFinal,
@@ -265,7 +274,7 @@ export default function VotePage() {
   }
 
   if (hasVoted) {
-    const progressPct = players.length ? Math.min(100, (totalVotes / players.length) * 100) : 0
+    const pct = totalPlayers ? Math.min(100, (totalVotes / totalPlayers) * 100) : 0
     return (
       <div className="min-h-screen bg-gradient-to-br from-purple-500 via-pink-500 to-orange-500 p-4 md:p-8">
         <Toaster position="top-center" />
@@ -275,20 +284,29 @@ export default function VotePage() {
             <div className="text-6xl mb-6">🎨</div>
             <h2 className="text-3xl font-bold text-gray-800 mb-4">Waiting for other players...</h2>
             <p className="text-gray-600 text-xl mb-8">
-              {totalVotes} / {players.length} players have voted
+              {totalVotes} / {totalPlayers} players have voted
             </p>
             <div className="w-full bg-gray-200 rounded-full h-4 mb-8">
-              <div className="bg-gradient-to-r from-green-400 to-blue-500 h-4 rounded-full transition-all duration-500" style={{ width: `${progressPct}%` }} />
+              <div
+                className="bg-gradient-to-r from-green-400 to-blue-500 h-4 rounded-full transition-all duration-500"
+                style={{ width: `${pct}%` }}
+              />
             </div>
             <div className="flex justify-center gap-3 flex-wrap">
               {players.map(p => (
-                <div key={String(p.id)} className="w-14 h-14 rounded-full flex items-center justify-center text-white font-bold text-lg opacity-40" style={{ backgroundColor: p.color || '#666' }}>
+                <div
+                  key={String(p.id)}
+                  className="w-14 h-14 rounded-full flex items-center justify-center text-white font-bold text-lg opacity-40"
+                  style={{ backgroundColor: p.color || '#666' }}
+                >
                   {p.name?.charAt(0)?.toUpperCase() ?? '?'}
                 </div>
               ))}
             </div>
-            {totalVotes === players.length && (
-              <div className="mt-8 text-green-600 font-bold text-2xl animate-bounce">🎉 Everyone voted! Loading results...</div>
+            {totalVotes === totalPlayers && totalPlayers > 0 && (
+              <div className="mt-8 text-green-600 font-bold text-2xl animate-bounce">
+                🎉 Everyone voted! Loading results...
+              </div>
             )}
             <div className="mt-6 text-sm text-gray-400">Checking every 2 seconds...</div>
           </div>
@@ -305,6 +323,7 @@ export default function VotePage() {
           <h1 className="text-5xl font-black text-white mb-4">🎨 Vote for the Best Drawing!</h1>
           <p className="text-white text-xl">Choose your favorite masterpiece</p>
         </div>
+
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 mb-8">
           {drawings.map(d => (
             <button
@@ -326,6 +345,7 @@ export default function VotePage() {
             </button>
           ))}
         </div>
+
         <div className="flex justify-center">
           <button
             onClick={submitVote}
