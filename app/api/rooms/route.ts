@@ -9,7 +9,7 @@ type Body = {
   hostName?: string
   color?: string
   codeLength?: number
-  gameMode?: string
+  gameMode?: string // reçu mais pas stocké si colonne absente
 }
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL!
@@ -29,7 +29,6 @@ function randomColor() {
 export async function POST(req: Request) {
   try {
     if (!SUPABASE_URL || !SUPABASE_KEY) {
-      console.error('Env missing:', { SUPABASE_URL: !!SUPABASE_URL, SUPABASE_KEY: !!SUPABASE_KEY })
       return NextResponse.json({ error: 'Supabase env vars missing' }, { status: 500 })
     }
 
@@ -44,7 +43,7 @@ export async function POST(req: Request) {
     const hostName = (body.hostName || 'Host').toString().trim().slice(0, 24) || 'Host'
     const hostColor = body.color || randomColor()
     const codeLen = Math.max(3, Math.min(8, Number(body.codeLength) || 4))
-    const gameMode = (body.gameMode || 'classic').toString()
+    // const gameMode = (body.gameMode || 'classic').toString() // si tu as une colonne, tu pourras l’utiliser
 
     // Génère un code unique
     let code = ''
@@ -56,7 +55,6 @@ export async function POST(req: Request) {
         .eq('code', code)
         .maybeSingle()
       if (exErr) {
-        console.error('Check code error:', exErr)
         return NextResponse.json({ error: 'DB error checking code', details: exErr.message }, { status: 500 })
       }
       if (!exists) break
@@ -65,28 +63,26 @@ export async function POST(req: Request) {
       }
     }
 
-    // Crée la room (game_mode ignoré si la colonne n’existe pas)
+    // Crée la room (sans created_at dans le select; PostgREST l’a de toute façon)
     const { data: roomIns, error: roomErr } = await supabase
       .from('rooms')
-      .insert({ code, status: 'lobby', game_mode: gameMode } as any)
-      .select('id, code, status, created_at')
+      .insert({ code, status: 'lobby' } /* , game_mode si colonne existe */ as any)
+      .select('id, code, status')
       .maybeSingle()
 
     if (roomErr) {
-      console.error('Create room error:', roomErr)
       return NextResponse.json({ error: 'DB error creating room', details: roomErr.message }, { status: 500 })
     }
     const room = roomIns!
 
-    // Crée le host
+    // Crée le host (sans created_at dans le select)
     const { data: player, error: playerErr } = await supabase
       .from('players')
       .insert({ room_id: room.id, name: hostName, color: hostColor, is_host: true })
-      .select('id, room_id, name, color, is_host, created_at')
+      .select('id, room_id, name, color, is_host')
       .maybeSingle()
 
     if (playerErr) {
-      console.error('Create host error:', playerErr)
       // rollback
       await supabase.from('rooms').delete().eq('id', room.id)
       return NextResponse.json({ error: 'DB error creating host', details: playerErr.message }, { status: 500 })
@@ -94,7 +90,6 @@ export async function POST(req: Request) {
 
     return NextResponse.json({ room, player }, { status: 201 })
   } catch (err: any) {
-    console.error('Rooms API crash:', err)
     return NextResponse.json({ error: err?.message ?? 'Internal error' }, { status: 500 })
   }
 }
