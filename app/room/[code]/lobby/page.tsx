@@ -122,24 +122,22 @@ export default function LobbyPage() {
 
   const setupRealtimeSubscription = () => {
     console.log('🔌 Setting up realtime for room:', room?.id)
-
+  
     const channel = supabase
       .channel(`room-${room?.id}`)
       .on(
         'postgres_changes',
         { event: '*', schema: 'public', table: 'players', filter: `room_code=eq.${roomCode}` },
-        () => {
-          // Recharge
-          loadRoomData(true)
-        }
+        () => loadRoomData(true)
       )
       .on(
         'postgres_changes',
-        { event: '*', schema: 'public', table: 'rooms', filter: `code=eq.${roomCode}` },
+        // ✅ filtre par id (plus fiable)
+        { event: '*', schema: 'public', table: 'rooms', filter: `id=eq.${room?.id}` },
         (payload) => {
           const updatedRoom = payload.new as Room
           setLocalRoom(updatedRoom)
-
+  
           if (updatedRoom.status === 'playing') {
             handleGameStart(updatedRoom.game_mode as GameMode)
           } else {
@@ -150,7 +148,7 @@ export default function LobbyPage() {
       .subscribe((status) => {
         console.log('📡 Subscription status:', status)
       })
-
+  
     return () => {
       console.log('🔌 Cleaning up subscription')
       supabase.removeChannel(channel)
@@ -227,29 +225,37 @@ export default function LobbyPage() {
 
   const startGame = async () => {
     if (!currentPlayer?.is_host || !room) return
-
+  
     const cfg = getModeConfig(room.game_mode)
-
+  
     if (players.length < cfg.minPlayers) {
       toast.error(`Minimum ${cfg.minPlayers} joueurs requis !`)
       return
     }
-
+  
     const allReady = players.every(p => (p.is_ready ?? false) || p.is_host)
     if (!allReady) {
       toast.error('Tous les joueurs doivent être prêts !')
       return
     }
-
+  
     setIsStarting(true)
     try {
-      // 1) Reset des rounds pour cette room (évite conflits de parties précédentes)
-      await supabase.from('rounds').delete().eq('room_id', room.id)
-
+      // 1) Reset des rounds (nécessite DELETE policy)
+      const { error: delError } = await supabase
+        .from('rounds')
+        .delete()
+        .eq('room_id', room.id)
+  
+      if (delError) {
+        console.warn('⚠️ Rounds delete error:', delError)
+        // On ne bloque pas le start, on continue quand même
+      }
+  
       // 2) Démarrer à round 0 (Classic: prompts au round 0)
       const maxRounds = cfg.calculateRounds(players.length)
-
-      const { error } = await supabase
+  
+      const { data: updated, error: updError } = await supabase
         .from('rooms')
         .update({
           status: 'playing',
@@ -257,10 +263,18 @@ export default function LobbyPage() {
           current_round: 0
         })
         .eq('id', room.id)
-
-      if (error) throw error
-
-      // Realtime redirigera selon le mode
+        .select()
+        .single()
+  
+      if (updError) {
+        console.error('❌ Room update error:', updError)
+        toast.error('Failed to start game')
+        setIsStarting(false)
+        return
+      }
+  
+      // ✅ Redirection optimiste immédiate (ne dépend pas du Realtime)
+      handleGameStart((updated?.game_mode || room.game_mode) as GameMode)
     } catch (error) {
       console.error('Error starting game:', error)
       toast.error('Failed to start game')
