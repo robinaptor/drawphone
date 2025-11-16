@@ -106,7 +106,14 @@ export default function VotePage() {
     }
 
     const expected = expectedVotersRef.current || totalPlayers || players.length || 0
-    // console.log(`📊 votes=${votesCount} / expected=${expected} (playersState=${players.length})`)
+
+    if (expected > 0 && votesCount >= expected) {
+      // Le host tente de mettre la room en "results" (si RLS OK), mais on redirige tout le monde de toute façon
+      if (currentPlayer?.is_host) {
+        await supabase.from('rooms').update({ status: 'results' }).eq('id', room.id)
+      }
+      setTimeout(() => router.push(`/room/${roomCode}/results`), 600)
+    }
 
     if (expected > 0 && votesCount >= expected) {
       if (currentPlayer?.is_host) {

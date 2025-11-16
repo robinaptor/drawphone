@@ -1,366 +1,214 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
-import { Round, Player, Room, Vote } from '@/types/game'
-import { organizeIntoBooks } from '@/lib/game-logic'
-import { ResultsCarousel } from '@/components/ResultsCarousel'
-import DrawingDisplay from '@/components/DrawingDisplay'
 import toast, { Toaster } from 'react-hot-toast'
-import { motion } from 'framer-motion'
 
-interface Book {
-  id: string
-  rounds: Round[]
-  startPlayerName: string
-}
+type RoomRow = { id: string; code: string; status: string }
+type PlayerRow = { id: string; room_id: string; name: string; color?: string | null }
+type VoteRow = { voted_for_id: string; round_number: number }
+type RoundRow = { round_number: number }
 
-interface TopDrawing {
-  round: Round
-  votes: number
-  playerName: string
-  rank: number
-}
+type RankEntry = { playerId: string; name: string; color?: string | null; votes: number }
 
 export default function ResultsPage() {
   const params = useParams()
   const router = useRouter()
-  
-  const [room, setRoom] = useState<Room | null>(null)
-  const [players, setPlayers] = useState<Player[]>([])
-  const [currentPlayer, setCurrentPlayer] = useState<Player | null>(null)
-  const [books, setBooks] = useState<Book[]>([])
-  const [topDrawings, setTopDrawings] = useState<TopDrawing[]>([])
-  const [showPodium, setShowPodium] = useState(true)
-  const [isLoading, setIsLoading] = useState(true)
-  
   const roomCode = params.code as string
-  const playerId = typeof window !== 'undefined' ? sessionStorage.getItem('playerId') : null
-  
+
+  const [room, setRoom] = useState<RoomRow | null>(null)
+  const [players, setPlayers] = useState<PlayerRow[]>([])
+  const [roundNumber, setRoundNumber] = useState<number | null>(null)
+  const [ranking, setRanking] = useState<RankEntry[]>([])
+  const [loading, setLoading] = useState(true)
+
+  const nameMap = useMemo(() => {
+    const m = new Map<string, { name: string; color?: string | null }>()
+    players.forEach(p => m.set(String(p.id), { name: p.name, color: p.color }))
+    return m
+  }, [players])
+
   useEffect(() => {
-    if (!playerId) {
-      router.push('/')
-      return
-    }
-    
-    loadResults()
-  }, [playerId])
-  
+    loadResults().catch(err => {
+      console.error(err)
+      toast.error('Failed to load results')
+    })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
   const loadResults = async () => {
+    setLoading(true)
     try {
-      // Load room
-      const { data: roomData, error: roomError } = await supabase
+      // 1) Room
+      const { data: roomData, error: roomErr } = await supabase
         .from('rooms')
-        .select('*')
+        .select('id, code, status')
         .eq('code', roomCode.toUpperCase())
         .single()
-      
-      if (roomError) throw roomError
+      if (roomErr) throw roomErr
       setRoom(roomData)
-      
-      // Load players
-      const { data: playersData } = await supabase
+
+      // 2) Players
+      const { data: playersData, error: pErr } = await supabase
         .from('players')
-        .select('*')
+        .select('id, room_id, name, color')
         .eq('room_id', roomData.id)
         .order('created_at', { ascending: true })
-      
-      setPlayers(playersData || [])
-      
-      const current = playersData?.find(p => p.id === playerId)
-      if (current) {
-        setCurrentPlayer(current)
-      }
-      
-      // Load rounds
+      if (pErr) throw pErr
+      const plist = (playersData as PlayerRow[]) || []
+      setPlayers(plist)
+
+      // 3) Trouver le dernier round_number pertinent
+      let latestRound: number | null = null
+
+      // essai via rounds (type = draw)
       const { data: roundsData } = await supabase
         .from('rounds')
-        .select('*')
+        .select('round_number')
         .eq('room_id', roomData.id)
-        .order('created_at', { ascending: true })
-      
-      // Organize into books
-      const booksMap = organizeIntoBooks(roundsData || [], playersData || [])
-      
-      const booksArray: Book[] = []
-      booksMap.forEach((rounds, bookId) => {
-        const startPlayerId = bookId.replace('book-', '')
-        const startPlayer = playersData?.find(p => p.id === startPlayerId)
-        
-        booksArray.push({
-          id: bookId,
-          rounds,
-          startPlayerName: startPlayer?.name || 'Unknown'
-        })
-      })
-      
-      setBooks(booksArray)
-      
-      // Load votes and calculate top drawings
-      const { data: votesData } = await supabase
-        .from('votes')
-        .select('*')
-        .eq('room_id', roomData.id)
-      
-      calculateTopDrawings(roundsData || [], votesData || [], playersData || [])
-      
-      // Mark as finished
-      if (roomData.status !== 'finished' && current?.is_host) {
-        await supabase
-          .from('rooms')
-          .update({ status: 'finished' })
-          .eq('id', roomData.id)
+        .eq('type', 'draw')
+
+      const roundNums = ((roundsData as RoundRow[] | null) || [])
+        .map(r => r.round_number)
+        .filter((n): n is number => typeof n === 'number')
+      if (roundNums.length) {
+        latestRound = Math.max(...roundNums)
       }
-      
-      setIsLoading(false)
-      
-    } catch (error) {
-      console.error('Error loading results:', error)
-      toast.error('Failed to load results')
-    }
-  }
-  
-  const calculateTopDrawings = (rounds: Round[], votes: Vote[], players: Player[]) => {
-    // Filter only drawings
-    const drawings = rounds.filter(r => r.type === 'draw')
-    
-    // Count votes per drawing
-    const voteCounts = new Map<string, number>()
-    votes.forEach(vote => {
-      voteCounts.set(vote.round_id, (voteCounts.get(vote.round_id) || 0) + 1)
-    })
-    
-    // Create array with vote counts
-    const drawingsWithVotes = drawings.map(drawing => ({
-      round: drawing,
-      votes: voteCounts.get(drawing.id) || 0,
-      playerName: players.find(p => p.id === drawing.player_id)?.name || 'Unknown',
-      rank: 0
-    }))
-    
-    // Sort by votes (descending)
-    drawingsWithVotes.sort((a, b) => b.votes - a.votes)
-    
-    // Assign ranks
-    const top3 = drawingsWithVotes.slice(0, 3).map((item, index) => ({
-      ...item,
-      rank: index + 1
-    }))
-    
-    setTopDrawings(top3)
-  }
-  
-  const playAgain = async () => {
-    if (!currentPlayer?.is_host || !room) {
-      toast.error('Only the host can start a new game')
-      return
-    }
-    
-    try {
-      // Delete votes
-      await supabase
+
+      // fallback via votes si besoin
+      if (latestRound === null) {
+        const { data: votesForRounds } = await supabase
+          .from('votes')
+          .select('round_number')
+          .eq('room_id', roomData.id)
+        const nums = ((votesForRounds as VoteRow[] | null) || [])
+          .map(v => v.round_number)
+          .filter((n): n is number => typeof n === 'number')
+        if (nums.length) latestRound = Math.max(...nums)
+      }
+
+      setRoundNumber(latestRound)
+
+      // 4) Votes du round
+      const vq = supabase
         .from('votes')
-        .delete()
-        .eq('room_id', room.id)
-      
-      // Delete rounds
-      await supabase
-        .from('rounds')
-        .delete()
-        .eq('room_id', room.id)
-      
-      // Reset room
-      await supabase
-        .from('rooms')
-        .update({ 
-          status: 'lobby',
-          current_round: 0
-        })
-        .eq('id', room.id)
-      
-      // Reset players
-      await supabase
-        .from('players')
-        .update({ is_ready: false })
-        .eq('room_id', room.id)
-      
-      router.push(`/room/${roomCode}/lobby`)
-      toast.success('Starting new game!')
-    } catch (error) {
-      console.error('Error restarting game:', error)
-      toast.error('Failed to restart game')
+        .select('voted_for_id, round_number')
+        .eq('room_id', roomData.id)
+      if (typeof latestRound === 'number') vq.eq('round_number', latestRound)
+      const { data: votesData, error: vErr } = await vq
+      if (vErr) throw vErr
+      const votes = (votesData as VoteRow[] | null) || []
+
+      // 5) Comptage
+      const counts = new Map<string, number>()
+      for (const p of plist) counts.set(String(p.id), 0) // inclut ceux à 0
+      for (const v of votes) {
+        const id = String(v.voted_for_id)
+        counts.set(id, (counts.get(id) || 0) + 1)
+      }
+
+      const table: RankEntry[] = plist
+        .map(p => ({
+          playerId: String(p.id),
+          name: p.name,
+          color: p.color,
+          votes: counts.get(String(p.id)) || 0,
+        }))
+        .sort((a, b) => b.votes - a.votes || a.name.localeCompare(b.name))
+
+      setRanking(table)
+    } finally {
+      setLoading(false)
     }
   }
-  
-  const leaveGame = () => {
-    sessionStorage.clear()
-    router.push('/')
-  }
-  
-  if (isLoading) {
+
+  const top1 = ranking[0]
+  const top2 = ranking[1]
+  const top3 = ranking[2]
+
+  if (loading) {
     return (
-      <div className="min-h-screen bg-gradient-to-br from-purple-500 to-pink-500 flex items-center justify-center">
-        <div className="text-white text-2xl">Loading results...</div>
+      <div className="min-h-screen bg-gradient-to-br from-indigo-500 via-purple-500 to-pink-500 flex items-center justify-center">
+        <div className="text-white text-2xl">Loading results…</div>
       </div>
     )
   }
-  
+
+  if (!room) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-indigo-500 via-purple-500 to-pink-500 flex items-center justify-center">
+        <div className="text-white text-2xl">Room not found</div>
+      </div>
+    )
+  }
+
   return (
-    <div className="min-h-screen bg-gradient-to-br from-purple-500 via-pink-500 to-orange-500 p-4 md:p-8">
+    <div className="min-h-screen bg-gradient-to-br from-indigo-500 via-purple-500 to-pink-500 p-4 md:p-8">
       <Toaster position="top-center" />
-      
-      <div className="max-w-6xl mx-auto">
-        {showPodium && topDrawings.length > 0 ? (
-          <div>
-            {/* Podium */}
-            <div className="text-center mb-12">
-              <motion.h1 
-                initial={{ scale: 0 }}
-                animate={{ scale: 1 }}
-                transition={{ type: 'spring', duration: 0.8 }}
-                className="text-6xl font-black mb-4 bg-gradient-to-r from-yellow-400 to-orange-500 bg-clip-text text-transparent"
-              >
-                🏆 WINNERS! 🏆
-              </motion.h1>
-              <p className="text-white text-2xl">The best drawings!</p>
-            </div>
-            
-            {/* Podium display */}
-            <div className="flex items-end justify-center gap-8 mb-12">
-              {/* 2nd place */}
-              {topDrawings[1] && (
-                <motion.div
-                  initial={{ y: 100, opacity: 0 }}
-                  animate={{ y: 0, opacity: 1 }}
-                  transition={{ delay: 0.2, type: 'spring' }}
-                  className="flex flex-col items-center"
-                >
-                  <div className="bg-white rounded-2xl shadow-2xl p-6 mb-4 transform hover:scale-105 transition">
-                    <div className="w-48 h-48 border-4 border-gray-300 rounded-xl overflow-hidden mb-4">
-                      <DrawingDisplay data={topDrawings[1].round.content as any} />
-                    </div>
-                    <div className="text-center">
-                      <div className="text-6xl mb-2">🥈</div>
-                      <div className="font-bold text-xl text-gray-800">{topDrawings[1].playerName}</div>
-                      <div className="text-gray-600">{topDrawings[1].votes} votes</div>
-                    </div>
-                  </div>
-                  <div className="bg-gray-300 w-32 h-24 rounded-t-xl flex items-center justify-center">
-                    <span className="text-4xl font-black text-gray-700">2</span>
-                  </div>
-                </motion.div>
-              )}
-              
-              {/* 1st place */}
-              {topDrawings[0] && (
-                <motion.div
-                  initial={{ y: 100, opacity: 0 }}
-                  animate={{ y: 0, opacity: 1 }}
-                  transition={{ delay: 0.4, type: 'spring' }}
-                  className="flex flex-col items-center"
-                >
-                  <div className="bg-gradient-to-br from-yellow-200 to-yellow-400 rounded-2xl shadow-2xl p-8 mb-4 transform hover:scale-105 transition ring-4 ring-yellow-500">
-                    <div className="w-64 h-64 border-4 border-yellow-600 rounded-xl overflow-hidden mb-4">
-                      <DrawingDisplay data={topDrawings[0].round.content as any} />
-                    </div>
-                    <div className="text-center">
-                      <div className="text-8xl mb-2">👑</div>
-                      <div className="font-black text-2xl text-gray-800">{topDrawings[0].playerName}</div>
-                      <div className="text-gray-700 font-bold text-xl">{topDrawings[0].votes} votes</div>
-                    </div>
-                  </div>
-                  <div className="bg-gradient-to-br from-yellow-400 to-yellow-600 w-40 h-32 rounded-t-xl flex items-center justify-center shadow-xl">
-                    <span className="text-5xl font-black text-white">1</span>
-                  </div>
-                </motion.div>
-              )}
-              
-              {/* 3rd place */}
-              {topDrawings[2] && (
-                <motion.div
-                  initial={{ y: 100, opacity: 0 }}
-                  animate={{ y: 0, opacity: 1 }}
-                  transition={{ delay: 0, type: 'spring' }}
-                  className="flex flex-col items-center"
-                >
-                  <div className="bg-white rounded-2xl shadow-2xl p-6 mb-4 transform hover:scale-105 transition">
-                    <div className="w-48 h-48 border-4 border-orange-300 rounded-xl overflow-hidden mb-4">
-                      <DrawingDisplay data={topDrawings[2].round.content as any} />
-                    </div>
-                    <div className="text-center">
-                      <div className="text-6xl mb-2">🥉</div>
-                      <div className="font-bold text-xl text-gray-800">{topDrawings[2].playerName}</div>
-                      <div className="text-gray-600">{topDrawings[2].votes} votes</div>
-                    </div>
-                  </div>
-                  <div className="bg-orange-300 w-32 h-16 rounded-t-xl flex items-center justify-center">
-                    <span className="text-3xl font-black text-orange-700">3</span>
-                  </div>
-                </motion.div>
-              )}
-            </div>
-            
-            {/* Button to see all results */}
-            <div className="text-center mb-8">
-              <button
-                onClick={() => setShowPodium(false)}
-                className="px-8 py-4 bg-white text-purple-600 rounded-xl font-bold text-lg hover:bg-gray-100 shadow-lg transition transform hover:scale-105"
-              >
-                📖 See All Results
-              </button>
-            </div>
-          </div>
-        ) : (
-          <div>
-            {/* Carousel */}
-            {books.length > 0 ? (
-              <>
-                <ResultsCarousel books={books} players={players} />
-                
-                {/* Button to go back to podium */}
-                {topDrawings.length > 0 && (
-                  <div className="text-center mt-8">
-                    <button
-                      onClick={() => setShowPodium(true)}
-                      className="px-8 py-4 bg-yellow-400 text-gray-800 rounded-xl font-bold text-lg hover:bg-yellow-500 shadow-lg transition transform hover:scale-105"
-                    >
-                      🏆 Back to Podium
-                    </button>
-                  </div>
-                )}
-              </>
-            ) : (
-              <div className="text-center text-white">
-                <h1 className="text-4xl font-bold">No results yet!</h1>
-              </div>
-            )}
-          </div>
-        )}
-        
-        {/* Actions */}
-        <div className="flex gap-4 justify-center mt-12">
-          {currentPlayer?.is_host && (
-            <button
-              onClick={playAgain}
-              className="px-8 py-4 bg-green-500 text-white rounded-xl font-bold text-lg hover:bg-green-600 shadow-lg transition transform hover:scale-105"
-            >
-              🔄 Play Again
-            </button>
+      <div className="max-w-5xl mx-auto">
+        <div className="text-center mb-10">
+          <h1 className="text-5xl font-black text-white mb-2">🏆 Podium</h1>
+          {typeof roundNumber === 'number' && (
+            <p className="text-white/80">Round {roundNumber}</p>
           )}
-          
-          <button
-            onClick={leaveGame}
-            className="px-8 py-4 bg-gray-800 text-white rounded-xl font-bold text-lg hover:bg-gray-900 shadow-lg transition transform hover:scale-105"
-          >
-            🏠 Leave Game
-          </button>
         </div>
-        
-        <div className="text-center mt-8">
-          <p className="text-white text-sm opacity-75">
-            💡 Tip: Take screenshots of the funniest moments!
-          </p>
+
+        {/* Podium top 3 */}
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-10">
+          {/* 2nd */}
+          <div className="bg-white/90 rounded-3xl p-6 shadow-xl flex flex-col items-center justify-end md:order-1">
+            <div className="text-4xl">🥈</div>
+            <div className="text-xl font-bold mt-2">{top2 ? top2.name : '—'}</div>
+            <div className="text-gray-600">{top2 ? `${top2.votes} vote(s)` : ''}</div>
+          </div>
+          {/* 1st */}
+          <div className="bg-white rounded-3xl p-8 shadow-2xl flex flex-col items-center justify-end md:order-2">
+            <div className="text-6xl">🥇</div>
+            <div className="text-2xl font-extrabold mt-2">{top1 ? top1.name : '—'}</div>
+            <div className="text-gray-700">{top1 ? `${top1.votes} vote(s)` : ''}</div>
+          </div>
+          {/* 3rd */}
+          <div className="bg-white/90 rounded-3xl p-6 shadow-xl flex flex-col items-center justify-end md:order-3">
+            <div className="text-4xl">🥉</div>
+            <div className="text-xl font-bold mt-2">{top3 ? top3.name : '—'}</div>
+            <div className="text-gray-600">{top3 ? `${top3.votes} vote(s)` : ''}</div>
+          </div>
+        </div>
+
+        {/* Classement complet */}
+        <div className="bg-white/95 rounded-3xl shadow-xl p-6">
+          <h2 className="text-2xl font-bold mb-4">Classement</h2>
+          <ul className="divide-y">
+            {ranking.map((r, idx) => (
+              <li key={r.playerId} className="py-3 flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <div
+                    className="w-8 h-8 rounded-full"
+                    style={{ backgroundColor: r.color || '#888' }}
+                    title={r.name}
+                  />
+                  <span className="font-semibold">{idx + 1}. {r.name}</span>
+                </div>
+                <span className="text-gray-600">{r.votes} vote(s)</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+
+        <div className="mt-8 flex justify-center gap-3">
+          <button
+            onClick={() => router.push(`/room/${roomCode}`)}
+            className="px-6 py-3 bg-white/20 border border-white/40 text-white rounded-xl hover:bg-white/30"
+          >
+            Back to room
+          </button>
+          <button
+            onClick={() => router.push('/')}
+            className="px-6 py-3 bg-white text-purple-600 font-bold rounded-xl hover:bg-gray-100"
+          >
+            Home
+          </button>
         </div>
       </div>
     </div>
