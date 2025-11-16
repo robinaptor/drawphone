@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
 import DrawingDisplay from '@/components/DrawingDisplay'
@@ -35,6 +35,9 @@ export default function VotePage() {
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [loadingDrawings, setLoadingDrawings] = useState(true)
 
+  // garde une copie stable du total attendu (ne doit jamais redescendre à 0)
+  const expectedVotersRef = useRef(0)
+
   const roomCode = params.code as string
   const playerId = typeof window !== 'undefined' ? sessionStorage.getItem('playerId') : null
 
@@ -53,6 +56,7 @@ export default function VotePage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [playerId])
 
+  // Polling: statut + votes
   useEffect(() => {
     if (!room) return
     const interval = setInterval(() => {
@@ -74,29 +78,49 @@ export default function VotePage() {
   const checkVoteCount = async () => {
     if (!room) return
 
+    // 1) Compte des votes (filtré par round si on le connaît)
     const vq = supabase.from('votes').select('id', { count: 'exact', head: false }).eq('room_id', room.id)
     if (typeof currentRoundNumber === 'number') vq.eq('round_number', currentRoundNumber)
     const { count: votesRaw, error: votesErr } = await vq
     if (votesErr) console.error('Count votes error:', votesErr)
-    setTotalVotes(votesRaw ?? 0)
+    const votesCount = votesRaw ?? 0
+    setTotalVotes(votesCount)
 
-    const { count: playersRaw, error: playersErr } = await supabase
-      .from('players')
-      .select('id', { count: 'exact', head: false })
-      .eq('room_id', room.id)
-    if (playersErr) console.error('Count players error:', playersErr)
-    setTotalPlayers(prev => (playersRaw && playersRaw > 0 ? playersRaw : players.length || prev))
+    // 2) Ne JAMAIS redescendre totalPlayers à 0
+    //    Si totalPlayers est 0 mais on a déjà la liste des players => fixe-le une bonne fois
+    if (totalPlayers === 0 && players.length > 0) {
+      setTotalPlayers(players.length)
+      expectedVotersRef.current = players.length
+    }
 
-    if ((playersRaw ?? players.length) > 0 && (votesRaw ?? 0) >= (playersRaw ?? players.length) && currentPlayer?.is_host) {
-      const { error } = await supabase.from('rooms').update({ status: 'results' }).eq('id', room.id)
-      if (!error) setTimeout(() => router.push(`/room/${roomCode}/results`), 800)
+    // 3) Si toujours 0 (cas extrême), fallback via "distinct player_id" sur les dessins du round courant
+    if (totalPlayers === 0 && drawings.length > 0) {
+      const roundFilter = typeof currentRoundNumber === 'number'
+        ? drawings.filter(d => d.round_number === currentRoundNumber)
+        : drawings
+      const distinctAuthors = new Set(roundFilter.map(d => String(d.player_id))).size
+      if (distinctAuthors > 0) {
+        setTotalPlayers(distinctAuthors)
+        expectedVotersRef.current = distinctAuthors
+      }
+    }
+
+    const expected = expectedVotersRef.current || totalPlayers || players.length || 0
+    // console.log(`📊 votes=${votesCount} / expected=${expected} (playersState=${players.length})`)
+
+    if (expected > 0 && votesCount >= expected) {
+      if (currentPlayer?.is_host) {
+        const { error } = await supabase.from('rooms').update({ status: 'results' }).eq('id', room.id)
+        if (!error) setTimeout(() => router.push(`/room/${roomCode}/results`), 600)
+      } else {
+        // Non-host: laisse le host changer le statut; on continuera de poller et on se redirigera via checkRoomStatus
+      }
     }
   }
 
   const fetchDrawings = async (roomId: string) => {
     setLoadingDrawings(true)
     try {
-      // 1) Essaye type='draw'
       let { data: roundsData, error: rErr } = await supabase
         .from('rounds')
         .select('id, room_id, player_id, round_number, content, created_at, type, book_id')
@@ -104,29 +128,21 @@ export default function VotePage() {
         .eq('type', 'draw')
         .order('created_at', { ascending: true })
 
-      if (rErr) {
-        console.error('Rounds query error (draw):', rErr)
-      }
+      if (rErr) console.error('Rounds query error (draw):', rErr)
 
-      // 2) Fallback: si vide, retente sans filtre de type
       if (!roundsData || roundsData.length === 0) {
         const fb = await supabase
           .from('rounds')
           .select('id, room_id, player_id, round_number, content, created_at, type, book_id')
           .eq('room_id', roomId)
           .order('created_at', { ascending: true })
-        if (fb.error) {
-          console.error('Rounds fallback error (no type):', fb.error)
-        } else {
-          roundsData = fb.data || []
-        }
+        if (fb.error) console.error('Rounds fallback error (no type):', fb.error)
+        else roundsData = fb.data || []
       }
 
       const list = (roundsData as DrawingRoundRow[]) || []
       setDrawings(list)
-      console.debug('🎯 Drawings fetched:', list.length)
 
-      // Round courant = max(round_number) si dispo
       const nums = list.map(r => r.round_number).filter((n): n is number => typeof n === 'number')
       const roundNumber = nums.length ? Math.max(...nums) : null
       setCurrentRoundNumber(roundNumber)
@@ -144,13 +160,14 @@ export default function VotePage() {
         .eq('code', roomCode.toUpperCase())
         .single()
       if (roomError) throw roomError
+
       if (roomData.status === 'results' || roomData.status === 'finished') {
         router.push(`/room/${roomCode}/results`)
         return
       }
       setRoom(roomData)
 
-      // Players
+      // Players (liste complète)
       const { data: playersData, error: pErr } = await supabase
         .from('players')
         .select('id, room_id, name, color, is_host')
@@ -160,7 +177,11 @@ export default function VotePage() {
 
       const list = (playersData as PlayerRow[]) || []
       setPlayers(list)
-      setTotalPlayers(list.length)
+
+      // Figer le nombre de votants maintenant
+      const expected = list.length
+      setTotalPlayers(expected)
+      expectedVotersRef.current = expected
 
       const me = list.find(p => String(p.id) === String(playerId)) || null
       setCurrentPlayer(me)
@@ -279,7 +300,8 @@ export default function VotePage() {
   }
 
   if (hasVoted) {
-    const pct = totalPlayers ? Math.min(100, (totalVotes / totalPlayers) * 100) : 0
+    const expected = expectedVotersRef.current || totalPlayers || players.length || 0
+    const pct = expected ? Math.min(100, (totalVotes / expected) * 100) : 0
     return (
       <div className="min-h-screen bg-gradient-to-br from-purple-500 via-pink-500 to-orange-500 p-4 md:p-8">
         <Toaster position="top-center" />
@@ -289,7 +311,7 @@ export default function VotePage() {
             <div className="text-6xl mb-6">🎨</div>
             <h2 className="text-3xl font-bold text-gray-800 mb-4">Waiting for other players...</h2>
             <p className="text-gray-600 text-xl mb-8">
-              {totalVotes} / {totalPlayers} players have voted
+              {totalVotes} / {expected} players have voted
             </p>
             <div className="w-full bg-gray-200 rounded-full h-4 mb-8">
               <div className="bg-gradient-to-r from-green-400 to-blue-500 h-4 rounded-full transition-all duration-500" style={{ width: `${pct}%` }} />
@@ -301,7 +323,7 @@ export default function VotePage() {
                 </div>
               ))}
             </div>
-            {totalVotes === totalPlayers && totalPlayers > 0 && (
+            {expected > 0 && totalVotes >= expected && (
               <div className="mt-8 text-green-600 font-bold text-2xl animate-bounce">
                 🎉 Everyone voted! Loading results...
               </div>
@@ -322,7 +344,6 @@ export default function VotePage() {
           <p className="text-white text-xl">Choose your favorite masterpiece</p>
         </div>
 
-        {/* état drawings */}
         {loadingDrawings ? (
           <div className="text-center text-white/80 py-10">Loading drawings…</div>
         ) : drawings.length === 0 ? (
@@ -335,7 +356,9 @@ export default function VotePage() {
               <button
                 key={d.id}
                 onClick={() => setSelectedRoundId(d.id)}
-                className={`bg-white rounded-2xl shadow-xl p-6 transition transform hover:scale-105 ${selectedRoundId === d.id ? 'ring-4 ring-yellow-400 scale-105' : ''}`}
+                className={`bg-white rounded-2xl shadow-xl p-6 transition transform hover:scale-105 ${
+                  selectedRoundId === d.id ? 'ring-4 ring-yellow-400 scale-105' : ''
+                }`}
               >
                 <div className="mb-4">
                   <div className="border-4 border-gray-800 rounded-xl overflow-hidden">
