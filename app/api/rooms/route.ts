@@ -13,11 +13,10 @@ type Body = {
 }
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL!
-const SERVICE_KEY =
-  process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
+const SUPABASE_KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY! // même projet que le client
 
 function randomCode(len = 4) {
-  const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789' // sans O/I/0/1
+  const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'
   let out = ''
   for (let i = 0; i < len; i++) out += alphabet[Math.floor(Math.random() * alphabet.length)]
   return out
@@ -29,12 +28,12 @@ function randomColor() {
 
 export async function POST(req: Request) {
   try {
-    if (!SUPABASE_URL || !SERVICE_KEY) {
-      console.error('Env missing:', { SUPABASE_URL: !!SUPABASE_URL, SERVICE_KEY: !!SERVICE_KEY })
+    if (!SUPABASE_URL || !SUPABASE_KEY) {
+      console.error('Env missing:', { SUPABASE_URL: !!SUPABASE_URL, SUPABASE_KEY: !!SUPABASE_KEY })
       return NextResponse.json({ error: 'Supabase env vars missing' }, { status: 500 })
     }
 
-    const supabase = createClient(SUPABASE_URL, SERVICE_KEY, { auth: { persistSession: false } })
+    const supabase = createClient(SUPABASE_URL, SUPABASE_KEY, { auth: { persistSession: false } })
 
     const ct = req.headers.get('content-type') || ''
     if (!ct.includes('application/json')) {
@@ -47,7 +46,7 @@ export async function POST(req: Request) {
     const codeLen = Math.max(3, Math.min(8, Number(body.codeLength) || 4))
     const gameMode = (body.gameMode || 'classic').toString()
 
-    // Génère un code unique (max 12 essais)
+    // Génère un code unique
     let code = ''
     for (let i = 0; i < 12; i++) {
       code = randomCode(codeLen)
@@ -66,7 +65,7 @@ export async function POST(req: Request) {
       }
     }
 
-    // Insère la room (si la colonne game_mode n’existe pas, c’est ignoré)
+    // Crée la room (game_mode ignoré si la colonne n’existe pas)
     const { data: roomIns, error: roomErr } = await supabase
       .from('rooms')
       .insert({ code, status: 'lobby', game_mode: gameMode } as any)
@@ -77,23 +76,9 @@ export async function POST(req: Request) {
       console.error('Create room error:', roomErr)
       return NextResponse.json({ error: 'DB error creating room', details: roomErr.message }, { status: 500 })
     }
+    const room = roomIns!
 
-    let room = roomIns
-    if (!room) {
-      // Fallback (cas RLS): refetch
-      const { data: roomFetch, error: rfErr } = await supabase
-        .from('rooms')
-        .select('id, code, status, created_at')
-        .eq('code', code)
-        .single()
-      if (rfErr) {
-        console.error('Fetch room after insert error:', rfErr)
-        return NextResponse.json({ error: 'Room created but cannot read it', details: rfErr.message }, { status: 500 })
-      }
-      room = roomFetch
-    }
-
-    // Crée le host (player)
+    // Crée le host
     const { data: player, error: playerErr } = await supabase
       .from('players')
       .insert({ room_id: room.id, name: hostName, color: hostColor, is_host: true })
@@ -102,6 +87,7 @@ export async function POST(req: Request) {
 
     if (playerErr) {
       console.error('Create host error:', playerErr)
+      // rollback
       await supabase.from('rooms').delete().eq('id', room.id)
       return NextResponse.json({ error: 'DB error creating host', details: playerErr.message }, { status: 500 })
     }
