@@ -45,35 +45,83 @@ export default function LobbyPage() {
     return cleanup
   }, [room?.id])
   
-  const loadRoomData = async () => {
+  const loadRoomData = async (silent = false) => {
+    const code = (roomCode || '').trim().toUpperCase()
+    if (!code) {
+      if (!silent) {
+        toast.error('Invalid room code')
+      }
+      return
+    }
+  
     try {
+      if (!silent) console.log('📡 Loading room data for code:', code)
+  
+      // 1) Room par code (maybeSingle pour éviter throw auto)
       const { data: roomData, error: roomError } = await supabase
         .from('rooms')
         .select('*')
-        .eq('code', roomCode.toUpperCase())
-        .single()
-      
-      if (roomError) throw roomError
+        .eq('code', code)
+        .maybeSingle()
+  
+      if (roomError) {
+        console.error('❌ Room error:', roomError)
+        if (!silent) toast.error(`Failed to load room (rooms): ${roomError.message}`)
+        setIsLoading(false)
+        return
+      }
+  
+      if (!roomData) {
+        console.warn('⚠️ No room found for code:', code)
+        if (!silent) toast.error(`Room not found for code ${code}`)
+        setIsLoading(false)
+        return
+      }
+  
       setLocalRoom(roomData)
-      
+  
+      // Si le jeu a démarré, on laissera le realtime router; ne quitte pas ici
+  
+      // 2) Players par room_code (pas room_id)
       const { data: playersData, error: playersError } = await supabase
         .from('players')
         .select('*')
-        .eq('room_id', roomData.id)
-        .order('created_at', { ascending: true })
-      
-      if (playersError) throw playersError
-      setPlayers(playersData)
-      
-      const current = playersData.find(p => p.id === playerId)
-      if (current) {
-        setLocalCurrentPlayer(current)
-        setIsReady(!!current.is_ready)
+        .eq('room_code', code)
+        .order('joined_at', { ascending: true })
+  
+      if (playersError) {
+        console.error('❌ Players error:', playersError)
+        if (!silent) toast.error(`Failed to load players: ${playersError.message}`)
+        setIsLoading(false)
+        return
       }
-    } catch (error) {
-      console.error('Error loading room:', error)
-      toast.error('Failed to load room')
-      router.push('/')
+  
+      setPlayers(playersData || [])
+  
+      // 3) Joueur courant depuis sessionStorage
+      const id = sessionStorage.getItem('playerId')
+      if (!id) {
+        console.warn('⚠️ No playerId in sessionStorage')
+        if (!silent) toast.error('You are not in this room')
+        setIsLoading(false)
+        return
+      }
+  
+      const me = (playersData || []).find(p => p.id === id)
+      if (!me) {
+        console.warn('⚠️ Current player not found in room')
+        if (!silent) toast.error('Player not found in this room')
+        setIsLoading(false)
+        return
+      }
+  
+      setLocalCurrentPlayer(me)
+      setIsReady(!!me.is_ready)
+      setIsLoading(false)
+    } catch (error: any) {
+      console.error('💥 loadRoomData exception:', error)
+      if (!silent) toast.error(`Failed to load room: ${error.message || 'Unknown error'}`)
+      setIsLoading(false)
     }
   }
   
