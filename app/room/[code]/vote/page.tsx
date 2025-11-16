@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
 import { Round, Player, Room } from '@/types/game'
-import DrawingDisplay from '@/components/DrawingDisplay'
+import { DrawingDisplay } from '@/components/DrawingDisplay'
 import toast, { Toaster } from 'react-hot-toast'
 
 export default function VotePage() {
@@ -158,11 +158,30 @@ export default function VotePage() {
   }
   
   const submitVote = async () => {
-    if (!selectedRoundId || !room || !playerId) return
+    if (!selectedRoundId || !room || !playerId) {
+      toast.error('Please select a drawing first')
+      return
+    }
     
     setIsSubmitting(true)
     
     try {
+      // Vérifier si l'utilisateur a déjà voté
+      const { data: existingVote } = await supabase
+        .from('votes')
+        .select('*')
+        .eq('room_id', room.id)
+        .eq('voter_id', playerId)
+        .single()
+      
+      if (existingVote) {
+        toast.error('You already voted!')
+        setHasVoted(true)
+        setIsSubmitting(false)
+        return
+      }
+      
+      // Insérer le vote
       const { error } = await supabase
         .from('votes')
         .insert({
@@ -171,7 +190,10 @@ export default function VotePage() {
           round_id: selectedRoundId
         })
       
-      if (error) throw error
+      if (error) {
+        console.error('Vote error details:', error)
+        throw error
+      }
       
       setHasVoted(true)
       toast.success('Vote submitted!')
@@ -181,9 +203,9 @@ export default function VotePage() {
         checkVoteCount()
       }, 500)
       
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error voting:', error)
-      toast.error('Failed to vote')
+      toast.error(error.message || 'Failed to vote')
     } finally {
       setIsSubmitting(false)
     }
