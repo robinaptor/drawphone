@@ -6,7 +6,7 @@ import { supabase } from '@/lib/supabase'
 import DrawingDisplay from '@/components/DrawingDisplay'
 import toast, { Toaster } from 'react-hot-toast'
 
-// Types locaux minimum pour cette page
+// Types locaux minimum
 type RoomRow = { id: string; code: string; status: string }
 type PlayerRow = { id: string; room_id: string; name: string; color?: string | null; is_host?: boolean | null }
 type DrawingRoundRow = {
@@ -38,7 +38,6 @@ export default function VotePage() {
   const roomCode = params.code as string
   const playerId = typeof window !== 'undefined' ? sessionStorage.getItem('playerId') : null
 
-  // Map id -> nom pour éviter "Unknown"
   const nameMap = useMemo(() => {
     const m = new Map<string, string>()
     for (const p of players) m.set(String(p.id), p.name)
@@ -54,7 +53,7 @@ export default function VotePage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [playerId])
 
-  // Poll status + count toutes les 2s
+  // Polling status + count
   useEffect(() => {
     if (!room) return
     const interval = setInterval(() => {
@@ -63,7 +62,7 @@ export default function VotePage() {
     }, 2000)
     return () => clearInterval(interval)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [room, currentRoundNumber, currentPlayer?.is_host])
+  }, [room, currentRoundNumber, currentPlayer?.is_host, players.length])
 
   const checkRoomStatus = async () => {
     if (!room) return
@@ -76,23 +75,34 @@ export default function VotePage() {
   const checkVoteCount = async () => {
     if (!room) return
 
-    // Votes du round courant (si connu), sinon tous les votes de la room
-    const vq = supabase
-      .from('votes')
-      .select('*', { count: 'exact', head: true })
-      .eq('room_id', room.id)
+    // Compte des votes pour le round courant (si connu)
+    const vq = supabase.from('votes').select('id', { count: 'exact', head: false }).eq('room_id', room.id)
     if (typeof currentRoundNumber === 'number') vq.eq('round_number', currentRoundNumber)
-    const { count: votesRaw } = await vq
+    const { count: votesRaw, error: votesErr } = await vq
+    if (votesErr) console.error('Count votes error:', votesErr)
     const votesCount = votesRaw ?? 0
     setTotalVotes(votesCount)
 
-    // Nombre de joueurs (count DB, plus fiable que players.length)
-    const { count: playersRaw } = await supabase
+    // Compte des joueurs — sans HEAD pour fiabiliser, et fallback sur players.length
+    const { count: playersRaw, error: playersErr } = await supabase
       .from('players')
-      .select('*', { count: 'exact', head: true })
+      .select('id', { count: 'exact', head: false })
       .eq('room_id', room.id)
-    const playersCount = playersRaw ?? 0
-    setTotalPlayers(playersCount)
+    if (playersErr) console.error('Count players error:', playersErr)
+
+    // Fallback robuste: si le count renvoie 0 mais on connaît déjà la liste, on garde la valeur non-nulle
+    const fallbackPlayers = players.length
+    const playersCount =
+      typeof playersRaw === 'number'
+        ? playersRaw > 0
+          ? playersRaw
+          : fallbackPlayers
+        : fallbackPlayers
+
+    setTotalPlayers(prev => (playersCount > 0 ? playersCount : prev))
+
+    // Debug
+    // console.log(`📊 Votes ${votesCount} / Players ${playersCount} (state list: ${players.length})`)
 
     if (playersCount > 0 && votesCount >= playersCount && currentPlayer?.is_host) {
       const { error } = await supabase.from('rooms').update({ status: 'results' }).eq('id', room.id)
@@ -116,23 +126,20 @@ export default function VotePage() {
       }
       setRoom(roomData)
 
-      // Players
-      const { data: playersData } = await supabase
+      // Players (liste + set total via length tout de suite)
+      const { data: playersData, error: pErr } = await supabase
         .from('players')
         .select('id, room_id, name, color, is_host')
         .eq('room_id', roomData.id)
         .order('created_at', { ascending: true })
-      setPlayers((playersData as PlayerRow[]) || [])
+      if (pErr) throw pErr
 
-      const me = (playersData as PlayerRow[] | null)?.find(p => String(p.id) === String(playerId)) || null
+      const list = (playersData as PlayerRow[]) || []
+      setPlayers(list)
+      setTotalPlayers(list.length) // premier remplissage fiable
+
+      const me = list.find(p => String(p.id) === String(playerId)) || null
       setCurrentPlayer(me)
-
-      // Nombre de joueurs (count DB)
-      const { count: playersCount } = await supabase
-        .from('players')
-        .select('*', { count: 'exact', head: true })
-        .eq('room_id', roomData.id)
-      setTotalPlayers(playersCount ?? (playersData?.length ?? 0))
 
       // Drawings (type = draw)
       const { data: roundsData, error: rErr } = await supabase
@@ -150,7 +157,7 @@ export default function VotePage() {
       const roundNumber = nums.length ? Math.max(...nums) : null
       setCurrentRoundNumber(roundNumber)
 
-      // Mon vote (room_id + round_number si connu)
+      // Mon vote éventuel (room_id + round_number si connu)
       if (playerId) {
         const mvq = supabase.from('votes').select('*').eq('room_id', roomData.id).eq('voter_id', playerId)
         if (typeof roundNumber === 'number') mvq.eq('round_number', roundNumber)
@@ -173,8 +180,8 @@ export default function VotePage() {
         }
       }
 
-      // Compte initial des votes
-      const cq = supabase.from('votes').select('*', { count: 'exact', head: true }).eq('room_id', roomData.id)
+      // Compte initial des votes (avec filtres round si dispo)
+      const cq = supabase.from('votes').select('id', { count: 'exact', head: false }).eq('room_id', roomData.id)
       if (typeof roundNumber === 'number') cq.eq('round_number', roundNumber)
       const { count } = await cq
       setTotalVotes(count ?? 0)
@@ -191,7 +198,7 @@ export default function VotePage() {
     setIsSubmitting(true)
 
     try {
-      // Dessin sélectionné en mémoire, sinon refetch minimal
+      // Dessin sélectionné (depuis état, sinon refetch minimal)
       let selected = drawings.find(d => d.id === selectedRoundId)
       if (!selected || typeof selected.player_id !== 'string' || typeof selected.round_number !== 'number') {
         const { data: row, error: rrErr } = await supabase
@@ -225,7 +232,7 @@ export default function VotePage() {
       // Déjà voté pour ce round ?
       const { data: existingVote } = await supabase
         .from('votes')
-        .select('*')
+        .select('id')
         .eq('room_id', room.id)
         .eq('round_number', roundNumberFinal)
         .eq('voter_id', playerId)
@@ -237,7 +244,7 @@ export default function VotePage() {
         return
       }
 
-      // Insert complet (aucun champ null)
+      // Insert complet
       const payload = {
         room_id: room.id,
         round_number: roundNumberFinal,
@@ -254,6 +261,7 @@ export default function VotePage() {
       setCurrentRoundNumber(prev => (prev ?? roundNumberFinal))
       toast.success('Vote submitted!')
 
+      // Recompte (laisser une demi-seconde)
       setTimeout(() => checkVoteCount(), 500)
     } catch (error: any) {
       console.error('Error voting:', error)
