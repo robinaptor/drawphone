@@ -28,8 +28,8 @@ export default function VotePage() {
       router.push('/')
       return
     }
-    
     loadVotingData()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [playerId])
   
   useEffect(() => {
@@ -41,6 +41,7 @@ export default function VotePage() {
     }, 2000)
     
     return () => clearInterval(interval)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [room])
   
   const checkRoomStatus = async () => {
@@ -64,13 +65,14 @@ export default function VotePage() {
     const { count } = await supabase
       .from('votes')
       .select('*', { count: 'exact', head: true })
-      .eq('room_id', room.id)
+      .eq('room_code', room.code) // IMPORTANT: room_code
     
-    setTotalVotes(count || 0)
+    const votesCount = count ?? 0
+    setTotalVotes(votesCount)
     
-    console.log(`📊 Votes: ${count} / ${players.length}`)
+    console.log(`📊 Votes: ${votesCount} / ${players.length}`)
     
-    if (count === players.length && currentPlayer?.is_host) {
+    if (votesCount === players.length && currentPlayer?.is_host) {
       console.log('✅ Everyone voted! Host changing status...')
       
       const { error } = await supabase
@@ -131,24 +133,28 @@ export default function VotePage() {
       
       setDrawings(roundsData || [])
       
-      const { data: myVote } = await supabase
-        .from('votes')
-        .select('*')
-        .eq('room_id', roomData.id)
-        .eq('voter_id', playerId)
-        .single()
-      
-      if (myVote) {
-        setHasVoted(true)
-        setSelectedRoundId(myVote.round_id)
+      // Récupérer mon vote éventuel via room_code
+      if (playerId) {
+        const { data: myVote } = await supabase
+          .from('votes')
+          .select('*')
+          .eq('room_code', roomData.code) // IMPORTANT: room_code
+          .eq('voter_id', playerId)
+          .maybeSingle()
+        
+        if (myVote) {
+          setHasVoted(true)
+          setSelectedRoundId(myVote.round_id)
+        }
       }
       
+      // Compter les votes initiaux via room_code
       const { count } = await supabase
         .from('votes')
         .select('*', { count: 'exact', head: true })
-        .eq('room_id', roomData.id)
+        .eq('room_code', roomData.code) // IMPORTANT: room_code
       
-      setTotalVotes(count || 0)
+      setTotalVotes(count ?? 0)
       
     } catch (error) {
       console.error('Error loading voting data:', error)
@@ -164,12 +170,13 @@ export default function VotePage() {
     setIsSubmitting(true)
     
     try {
+      // Vérifier si le joueur a déjà voté (filtré par room_code)
       const { data: existingVote } = await supabase
         .from('votes')
         .select('*')
-        .eq('room_id', room.id)
+        .eq('room_code', room.code) // IMPORTANT: room_code
         .eq('voter_id', playerId)
-        .single()
+        .maybeSingle()
       
       if (existingVote) {
         toast.error('You already voted!')
@@ -178,10 +185,11 @@ export default function VotePage() {
         return
       }
       
+      // Insérer le vote avec room_code
       const { error } = await supabase
         .from('votes')
         .insert({
-          room_id: room.id,
+          room_code: room.code,     // IMPORTANT: room_code
           voter_id: playerId,
           round_id: selectedRoundId
         })
@@ -219,6 +227,8 @@ export default function VotePage() {
   }
   
   if (hasVoted) {
+    const progressPct = players.length ? Math.min(100, (totalVotes / players.length) * 100) : 0
+
     return (
       <div className="min-h-screen bg-gradient-to-br from-purple-500 via-pink-500 to-orange-500 p-4 md:p-8">
         <Toaster position="top-center" />
@@ -240,7 +250,7 @@ export default function VotePage() {
             <div className="w-full bg-gray-200 rounded-full h-4 mb-8">
               <div 
                 className="bg-gradient-to-r from-green-400 to-blue-500 h-4 rounded-full transition-all duration-500"
-                style={{ width: `${(totalVotes / players.length) * 100}%` }}
+                style={{ width: `${progressPct}%` }}
               />
             </div>
             
