@@ -1,14 +1,13 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
-import { Player, Room } from '@/types/game'
+import { Player, Room, GameMode, GAME_MODE_CONFIGS } from '@/types/game'
 import { PlayerList } from '@/components/PlayerList'
-import { GameSettings } from '@/components/GameSettings'
 import { Chat } from '@/components/Chat'
+import { ModeSelector } from '@/components/ModeSelector'
 import toast, { Toaster } from 'react-hot-toast'
-import { GameMode, GAME_MODE_CONFIGS } from '@/types/game'
 
 // Helper safe pour récupérer la config d’un mode
 function getModeConfig(mode?: string) {
@@ -19,102 +18,98 @@ function getModeConfig(mode?: string) {
 export default function LobbyPage() {
   const params = useParams()
   const router = useRouter()
-  
+  const roomCode = (params.code as string)?.toUpperCase()
+
   const [room, setLocalRoom] = useState<Room | null>(null)
   const [players, setPlayers] = useState<Player[]>([])
   const [currentPlayer, setLocalCurrentPlayer] = useState<Player | null>(null)
   const [isReady, setIsReady] = useState(false)
   const [isStarting, setIsStarting] = useState(false)
-  
-  const roomCode = params.code as string
+  const [isLoading, setIsLoading] = useState(true)
+
   const playerId = typeof window !== 'undefined' ? sessionStorage.getItem('playerId') : null
-  
+  const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null)
+
   useEffect(() => {
     if (!playerId) {
-      router.push('/')
+      router.replace('/')
       return
     }
-    
+    if (!roomCode) {
+      toast.error('Invalid room code')
+      router.replace('/')
+      return
+    }
+
     loadRoomData()
-  }, [playerId])
-  
+
+    // Polling sauvegarde si le realtime est capricieux
+    pollingRef.current = setInterval(() => {
+      loadRoomData(true)
+    }, 2000)
+
+    return () => {
+      if (pollingRef.current) clearInterval(pollingRef.current)
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [playerId, roomCode])
+
   useEffect(() => {
     if (!room) return
-    
     const cleanup = setupRealtimeSubscription()
     return cleanup
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [room?.id])
-  
+
   const loadRoomData = async (silent = false) => {
     const code = (roomCode || '').trim().toUpperCase()
-    if (!code) {
-      if (!silent) {
-        toast.error('Invalid room code')
-      }
-      return
-    }
-  
     try {
       if (!silent) console.log('📡 Loading room data for code:', code)
-  
-      // 1) Room par code (maybeSingle pour éviter throw auto)
+
+      // Room par code
       const { data: roomData, error: roomError } = await supabase
         .from('rooms')
         .select('*')
         .eq('code', code)
-        .maybeSingle()
-  
-      if (roomError) {
-        console.error('❌ Room error:', roomError)
-        if (!silent) toast.error(`Failed to load room (rooms): ${roomError.message}`)
+        .single()
+
+      if (roomError || !roomData) {
+        if (!silent) toast.error('Room not found')
         setIsLoading(false)
         return
       }
-  
-      if (!roomData) {
-        console.warn('⚠️ No room found for code:', code)
-        if (!silent) toast.error(`Room not found for code ${code}`)
-        setIsLoading(false)
-        return
-      }
-  
+
       setLocalRoom(roomData)
-  
-      // Si le jeu a démarré, on laissera le realtime router; ne quitte pas ici
-  
-      // 2) Players par room_code (pas room_id)
+
+      // Players par room_code (pas room_id)
       const { data: playersData, error: playersError } = await supabase
         .from('players')
         .select('*')
         .eq('room_code', code)
         .order('joined_at', { ascending: true })
-  
+
       if (playersError) {
-        console.error('❌ Players error:', playersError)
-        if (!silent) toast.error(`Failed to load players: ${playersError.message}`)
+        if (!silent) toast.error('Failed to load players')
         setIsLoading(false)
         return
       }
-  
+
       setPlayers(playersData || [])
-  
-      // 3) Joueur courant depuis sessionStorage
+
       const id = sessionStorage.getItem('playerId')
       if (!id) {
-        console.warn('⚠️ No playerId in sessionStorage')
         if (!silent) toast.error('You are not in this room')
         setIsLoading(false)
         return
       }
-  
+
       const me = (playersData || []).find(p => p.id === id)
       if (!me) {
-        console.warn('⚠️ Current player not found in room')
         if (!silent) toast.error('Player not found in this room')
         setIsLoading(false)
         return
       }
-  
+
       setLocalCurrentPlayer(me)
       setIsReady(!!me.is_ready)
       setIsLoading(false)
@@ -124,193 +119,207 @@ export default function LobbyPage() {
       setIsLoading(false)
     }
   }
-  
+
   const setupRealtimeSubscription = () => {
     console.log('🔌 Setting up realtime for room:', room?.id)
-    
+
     const channel = supabase
       .channel(`room-${room?.id}`)
       .on(
         'postgres_changes',
-        {
-          event: 'INSERT',
-          schema: 'public',
-          table: 'players',
-          filter: `room_id=eq.${room?.id}`
-        },
-        (payload) => {
-          console.log('➕ Player joined:', payload.new)
-          const newPlayer = payload.new as Player
-          
-          setPlayers(prev => {
-            if (prev.find(p => p.id === newPlayer.id)) {
-              return prev
-            }
-            return [...prev, newPlayer]
-          })
-          
-          toast.success(`${newPlayer.name} joined!`)
+        { event: '*', schema: 'public', table: 'players', filter: `room_code=eq.${roomCode}` },
+        () => {
+          // Recharge
+          loadRoomData(true)
         }
       )
       .on(
         'postgres_changes',
-        {
-          event: 'DELETE',
-          schema: 'public',
-          table: 'players',
-          filter: `room_id=eq.${room?.id}`
-        },
+        { event: '*', schema: 'public', table: 'rooms', filter: `code=eq.${roomCode}` },
         (payload) => {
-          console.log('➖ Player left:', payload.old)
-          const oldPlayer = payload.old as Player
-          
-          setPlayers(prev => prev.filter(p => p.id !== oldPlayer.id))
-          toast(`${oldPlayer.name} left`)
-        }
-      )
-      .on(
-        'postgres_changes',
-        {
-          event: 'UPDATE',
-          schema: 'public',
-          table: 'players',
-          filter: `room_id=eq.${room?.id}`
-        },
-        (payload) => {
-          console.log('🔄 Player updated:', payload.new)
-          const updatedPlayer = payload.new as Player
-          
-          setPlayers(prev => prev.map(p => 
-            p.id === updatedPlayer.id ? updatedPlayer : p
-          ))
-          
-          if (updatedPlayer.id === playerId) {
-            setLocalCurrentPlayer(updatedPlayer)
-            setIsReady(!!updatedPlayer.is_ready)
-          }
-        }
-      )
-      .on(
-        'postgres_changes',
-        {
-          event: 'UPDATE',
-          schema: 'public',
-          table: 'rooms',
-          filter: `id=eq.${room?.id}`
-        },
-        (payload) => {
-          console.log('🎮 Room updated:', payload.new)
           const updatedRoom = payload.new as Room
-          
           setLocalRoom(updatedRoom)
-          
+
           if (updatedRoom.status === 'playing') {
-            console.log('🚀 Redirecting to game...')
-            router.push(`/room/${roomCode}/game`)
+            handleGameStart(updatedRoom.game_mode as GameMode)
+          } else {
+            loadRoomData(true)
           }
         }
       )
       .subscribe((status) => {
         console.log('📡 Subscription status:', status)
       })
-    
+
     return () => {
       console.log('🔌 Cleaning up subscription')
       supabase.removeChannel(channel)
     }
   }
-  
+
+  const handleGameStart = (mode: GameMode) => {
+    if (pollingRef.current) clearInterval(pollingRef.current)
+
+    switch (mode) {
+      case 'cadavre-exquis':
+        router.replace(`/room/${roomCode}/cadavre-exquis`)
+        break
+      case 'combo-chain':
+        router.replace(`/room/${roomCode}/combo-chain`)
+        break
+      case 'pixel-perfect':
+        router.replace(`/room/${roomCode}/pixel-perfect`)
+        break
+      case 'morph-mode':
+        router.replace(`/room/${roomCode}/morph-mode`)
+        break
+      case 'battle-royale':
+        router.replace(`/room/${roomCode}/battle-royale`)
+        break
+      default:
+        router.replace(`/room/${roomCode}/game`)
+        break
+    }
+  }
+
   const toggleReady = async () => {
     if (!currentPlayer || !room) return
-    
-    const newReadyState = !isReady
-    
+
+    const newReady = !isReady
     try {
       const { error } = await supabase
         .from('players')
-        .update({ is_ready: newReadyState })
+        .update({ is_ready: newReady })
         .eq('id', currentPlayer.id)
-      
+
       if (error) throw error
-      
-      setIsReady(newReadyState)
+
+      setIsReady(newReady)
+      toast.success(newReady ? '✅ Prêt !' : '⏸️ Pas prêt')
+
+      setTimeout(() => loadRoomData(true), 400)
     } catch (error) {
       console.error('Error updating ready state:', error)
       toast.error('Failed to update ready state')
     }
   }
-  
+
+  const handleModeChange = async (mode: GameMode) => {
+    if (!currentPlayer?.is_host || !room) return
+
+    try {
+      const { error } = await supabase
+        .from('rooms')
+        .update({ game_mode: mode })
+        .eq('id', room.id)
+
+      if (error) throw error
+
+      const cfg = getModeConfig(mode)
+      toast.success(`Mode: ${cfg.name}`)
+
+      setTimeout(() => loadRoomData(true), 400)
+    } catch (error) {
+      console.error('Error updating mode:', error)
+      toast.error('Failed to change mode')
+    }
+  }
+
   const startGame = async () => {
     if (!currentPlayer?.is_host || !room) return
-  
-    const modeConfig = getModeConfig(room.game_mode)
-  
-    if (players.length < modeConfig.minPlayers) {
-      toast.error(`Minimum ${modeConfig.minPlayers} joueurs requis !`)
+
+    const cfg = getModeConfig(room.game_mode)
+
+    if (players.length < cfg.minPlayers) {
+      toast.error(`Minimum ${cfg.minPlayers} joueurs requis !`)
       return
     }
-  
-    const allReady = players.every(p => p.is_ready || p.is_host)
+
+    const allReady = players.every(p => (p.is_ready ?? false) || p.is_host)
     if (!allReady) {
       toast.error('Tous les joueurs doivent être prêts !')
       return
     }
-  
+
     setIsStarting(true)
-  
     try {
-      // 1) Reset des rounds pour cette room
+      // 1) Reset des rounds pour cette room (évite conflits de parties précédentes)
       await supabase.from('rounds').delete().eq('room_id', room.id)
-  
-      // 2) Démarrer à round 0 (il faut commencer par PROMPT)
-      const maxRounds = modeConfig.calculateRounds(players.length)
-  
+
+      // 2) Démarrer à round 0 (Classic: prompts au round 0)
+      const maxRounds = cfg.calculateRounds(players.length)
+
       const { error } = await supabase
         .from('rooms')
         .update({
           status: 'playing',
           max_rounds: maxRounds,
-          current_round: 0 // ← round 0 = prompt
+          current_round: 0
         })
         .eq('id', room.id)
-  
+
       if (error) throw error
-      // Realtime s’occupe de rediriger
-  
+
+      // Realtime redirigera selon le mode
     } catch (error) {
       console.error('Error starting game:', error)
       toast.error('Failed to start game')
       setIsStarting(false)
     }
   }
-  
+
   const copyRoomCode = () => {
     navigator.clipboard.writeText(roomCode)
-    toast.success('Room code copied!')
+    toast.success('Code copié !')
   }
-  
-  if (!room || !currentPlayer) {
+
+  // Loading
+  if (isLoading) {
     return (
       <div className="min-h-screen bg-gradient-to-br from-purple-500 to-pink-500 flex items-center justify-center">
-        <div className="text-white text-2xl">Loading...</div>
+        <Toaster />
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-16 w-16 border-t-4 border-b-4 border-white mx-auto mb-4"></div>
+          <div className="text-white text-2xl">Chargement...</div>
+        </div>
       </div>
     )
   }
-  
-  const allReady = players.every(p => (p.is_ready ?? false) || p.is_host)
+
+  // Error state
+  if (!room || !currentPlayer) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-purple-500 to-pink-500 flex items-center justify-center">
+        <Toaster />
+        <div className="text-center">
+          <div className="text-6xl mb-4">❌</div>
+          <h1 className="text-3xl font-bold text-white mb-4">
+            Failed to load room
+          </h1>
+          <button
+            onClick={() => router.replace('/')}
+            className="px-6 py-3 bg-white text-purple-600 rounded-full font-bold hover:scale-110 transition-transform"
+          >
+            Retour à l'accueil
+          </button>
+        </div>
+      </div>
+    )
+  }
+
   const modeConfig = getModeConfig(room.game_mode)
+  const allReady = players.every(p => (p.is_ready ?? false) || p.is_host)
   const canStart = currentPlayer.is_host && players.length >= modeConfig.minPlayers && allReady
-  
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-purple-500 via-pink-500 to-orange-500 p-4 md:p-8">
       <Toaster position="top-center" />
-      
+
       <div className="max-w-4xl mx-auto">
+        {/* Header */}
         <div className="text-center mb-8">
-          <h1 className="text-5xl font-black text-white mb-4">
-            Game Lobby
-          </h1>
-          
+          <h1 className="text-5xl font-black text-white mb-4">Game Lobby</h1>
+
           <div className="inline-block bg-white rounded-2xl shadow-xl p-6">
             <div className="text-sm text-gray-600 mb-2">Room Code</div>
             <div className="flex items-center gap-4">
@@ -326,22 +335,48 @@ export default function LobbyPage() {
             </div>
           </div>
         </div>
-        
+
+        {/* Mode Selector */}
+        {currentPlayer.is_host ? (
+          <div className="mb-8">
+            <div className="bg-white rounded-xl shadow-lg p-6">
+              <h3 className="font-bold text-xl mb-4 text-gray-800">
+                🎮 Choisis le mode de jeu
+              </h3>
+              <ModeSelector
+                selectedMode={room.game_mode as GameMode}
+                onSelectMode={handleModeChange}
+              />
+            </div>
+          </div>
+        ) : (
+          <div className="mb-8 p-6 bg-white rounded-xl shadow-lg text-center">
+            <p className="text-gray-600 mb-2">Mode sélectionné par l'hôte :</p>
+            <div className="flex items-center justify-center gap-3">
+              <span className="text-4xl">{modeConfig.emoji}</span>
+              <div>
+                <p className="text-2xl font-bold text-gray-800">{modeConfig.name}</p>
+                <p className="text-sm text-gray-600">{modeConfig.description}</p>
+              </div>
+            </div>
+          </div>
+        )}
+
         <div className="grid md:grid-cols-2 gap-8">
+          {/* Liste des joueurs */}
           <div>
             <PlayerList players={players} currentPlayerId={currentPlayer.id} />
-            
-            {players.length < 3 && (
+
+            {players.length < modeConfig.minPlayers && (
               <div className="mt-4 p-4 bg-yellow-100 border-2 border-yellow-400 rounded-xl text-yellow-800 text-center">
-                ⚠️ Need at least 3 players to start!
+                ⚠️ Minimum {modeConfig.minPlayers} joueurs requis !
               </div>
             )}
           </div>
-          
+
+          {/* Actions */}
           <div className="space-y-4">
-            {/* Settings Button */}
-            <GameSettings room={room} isHost={currentPlayer.is_host} />
-            
+            {/* Ready button pour non-hôtes */}
             {!currentPlayer.is_host && (
               <button
                 onClick={toggleReady}
@@ -351,55 +386,54 @@ export default function LobbyPage() {
                     : 'bg-white text-gray-800 hover:bg-gray-100'
                 }`}
               >
-                {isReady ? '✓ Ready!' : 'Click when Ready'}
+                {isReady ? '✓ Prêt !' : 'Clique quand tu es prêt'}
               </button>
             )}
-            
+
+            {/* Start button pour l'hôte */}
             {currentPlayer.is_host && (
               <button
                 onClick={startGame}
                 disabled={!canStart || isStarting}
-                className="w-full py-6 bg-gradient-to-r from-green-500 to-blue-500 text-white rounded-xl font-bold text-xl hover:from-green-600 hover:to-blue-600 disabled:opacity-50 disabled:cursor-not-allowed transition transform hover:scale-105"
+                className={`w-full py-6 rounded-xl font-bold text-xl transition transform hover:scale-105 ${
+                  canStart
+                    ? 'bg-gradient-to-r from-green-500 to-blue-500 text-white hover:from-green-600 hover:to-blue-600'
+                    : 'bg-gray-400 text-gray-200 cursor-not-allowed'
+                }`}
               >
-                {isStarting ? 'Starting...' : '🚀 Start Game!'}
+                {isStarting ? 'Démarrage...' : '🚀 Lancer la partie !'}
               </button>
             )}
-            
+
+            {/* Game info */}
             <div className="bg-white rounded-xl shadow-lg p-6">
-              <h3 className="font-bold text-lg mb-4 text-gray-800">Game Settings</h3>
-              
+              <h3 className="font-bold text-lg mb-4 text-gray-800">Paramètres</h3>
+
               <div className="space-y-3 text-gray-700">
                 <div className="flex justify-between">
-                  <span>Players:</span>
+                  <span>Joueurs:</span>
                   <span className="font-bold">{players.length} / {room.max_players}</span>
                 </div>
                 <div className="flex justify-between">
-                  <span>Time per round:</span>
+                  <span>Temps/round:</span>
                   <span className="font-bold">{room.round_time}s</span>
                 </div>
                 <div className="flex justify-between">
-                  <span>Total rounds:</span>
-                  <span className="font-bold">{players.length}</span>
+                  <span>Difficulté:</span>
+                  <span className="font-bold">
+                    {(modeConfig.difficulty?.toUpperCase() ?? 'MOYEN')}
+                  </span>
                 </div>
               </div>
-            </div>
-            
-            <div className="bg-purple-100 rounded-xl p-6">
-              <h3 className="font-bold text-purple-900 mb-3">How to Play:</h3>
-              <ol className="text-sm text-purple-800 space-y-2 list-decimal list-inside">
-                <li>Round 1: Everyone writes a sentence</li>
-                <li>Round 2: Draw the sentence you receive</li>
-                <li>Round 3: Describe the drawing you see</li>
-                <li>Repeat until all rounds done!</li>
-                <li>See the hilarious evolution! 😂</li>
-              </ol>
             </div>
           </div>
         </div>
       </div>
-      
-      {/* Chat Component */}
-      {currentPlayer && <Chat roomId={room.id} currentPlayer={currentPlayer} />}
+
+      {/* Chat */}
+      {currentPlayer && room && (
+        <Chat roomId={room.id} currentPlayer={currentPlayer} />
+      )}
     </div>
   )
 }
