@@ -16,6 +16,7 @@ export default function VotePage() {
   const [currentPlayer, setCurrentPlayer] = useState<Player | null>(null)
   const [drawings, setDrawings] = useState<Round[]>([])
   const [selectedRoundId, setSelectedRoundId] = useState<string | null>(null)
+  const [currentRoundNumber, setCurrentRoundNumber] = useState<number | null>(null)
   const [hasVoted, setHasVoted] = useState(false)
   const [totalVotes, setTotalVotes] = useState(0)
   const [isSubmitting, setIsSubmitting] = useState(false)
@@ -42,7 +43,7 @@ export default function VotePage() {
     
     return () => clearInterval(interval)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [room])
+  }, [room, currentRoundNumber])
   
   const checkRoomStatus = async () => {
     if (!room) return
@@ -62,10 +63,15 @@ export default function VotePage() {
   const checkVoteCount = async () => {
     if (!room) return
     
-    const { count } = await supabase
+    // Filtrer par room_code + round_number si on l’a
+    const query = supabase
       .from('votes')
       .select('*', { count: 'exact', head: true })
-      .eq('room_code', room.code) // IMPORTANT: room_code
+      .eq('room_code', room.code)
+    if (typeof currentRoundNumber === 'number') {
+      query.eq('round_number', currentRoundNumber)
+    }
+    const { count } = await query
     
     const votesCount = count ?? 0
     setTotalVotes(votesCount)
@@ -133,14 +139,24 @@ export default function VotePage() {
       
       setDrawings(roundsData || [])
       
-      // Récupérer mon vote éventuel via room_code
+      // Détermine le round_number courant depuis les dessins (prend le plus récent)
+      const numbers = (roundsData || [])
+        .map((r: any) => r?.round_number)
+        .filter((n: any) => typeof n === 'number')
+      const roundNumber = numbers.length ? Math.max(...numbers) : null
+      setCurrentRoundNumber(roundNumber)
+      
+      // Mon vote éventuel (filtré par room_code + round_number si dispo)
       if (playerId) {
-        const { data: myVote } = await supabase
+        const mvq = supabase
           .from('votes')
           .select('*')
-          .eq('room_code', roomData.code) // IMPORTANT: room_code
+          .eq('room_code', roomData.code)
           .eq('voter_id', playerId)
-          .maybeSingle()
+        if (typeof roundNumber === 'number') {
+          mvq.eq('round_number', roundNumber)
+        }
+        const { data: myVote } = await mvq.maybeSingle()
         
         if (myVote) {
           setHasVoted(true)
@@ -148,12 +164,15 @@ export default function VotePage() {
         }
       }
       
-      // Compter les votes initiaux via room_code
-      const { count } = await supabase
+      // Compter les votes initiaux (room_code + round_number si dispo)
+      const cq = supabase
         .from('votes')
         .select('*', { count: 'exact', head: true })
-        .eq('room_code', roomData.code) // IMPORTANT: room_code
-      
+        .eq('room_code', roomData.code)
+      if (typeof roundNumber === 'number') {
+        cq.eq('round_number', roundNumber)
+      }
+      const { count } = await cq
       setTotalVotes(count ?? 0)
       
     } catch (error) {
@@ -170,11 +189,33 @@ export default function VotePage() {
     setIsSubmitting(true)
     
     try {
-      // Vérifier si le joueur a déjà voté (filtré par room_code)
+      // Récupère le round_number du dessin sélectionné
+      const selected = drawings.find(d => d.id === selectedRoundId) as any
+      let selectedRoundNumber: number | undefined = selected?.round_number
+      
+      // Fallback: si non présent en mémoire, relis juste le champ
+      if (typeof selectedRoundNumber !== 'number') {
+        const { data: roundRow, error: rrErr } = await supabase
+          .from('rounds')
+          .select('round_number')
+          .eq('id', selectedRoundId)
+          .single()
+        if (rrErr) throw rrErr
+        selectedRoundNumber = (roundRow as any)?.round_number
+      }
+      
+      if (typeof selectedRoundNumber !== 'number') {
+        toast.error('Missing round number for the selected drawing')
+        setIsSubmitting(false)
+        return
+      }
+      
+      // Vérifie si le joueur a déjà voté pour CE round
       const { data: existingVote } = await supabase
         .from('votes')
         .select('*')
-        .eq('room_code', room.code) // IMPORTANT: room_code
+        .eq('room_code', room.code)
+        .eq('round_number', selectedRoundNumber)
         .eq('voter_id', playerId)
         .maybeSingle()
       
@@ -185,13 +226,14 @@ export default function VotePage() {
         return
       }
       
-      // Insérer le vote avec room_code
+      // Insère le vote avec room_code + round_number
       const { error } = await supabase
         .from('votes')
         .insert({
-          room_code: room.code,     // IMPORTANT: room_code
+          room_code: room.code,
           voter_id: playerId,
-          round_id: selectedRoundId
+          round_id: selectedRoundId,
+          round_number: selectedRoundNumber,
         })
       
       if (error) {
@@ -200,6 +242,8 @@ export default function VotePage() {
       }
       
       setHasVoted(true)
+      // Assure que le compteur regarde le bon round
+      setCurrentRoundNumber(prev => (typeof prev === 'number' ? prev : selectedRoundNumber!))
       toast.success('Vote submitted!')
       
       setTimeout(() => {
@@ -296,7 +340,7 @@ export default function VotePage() {
         </div>
         
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 mb-8">
-          {drawings.map((drawing) => (
+          {drawings.map((drawing: any) => (
             <button
               key={drawing.id}
               onClick={() => setSelectedRoundId(drawing.id)}
