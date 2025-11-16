@@ -1,6 +1,7 @@
 // app/api/rooms/route.ts
 import { NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
+import { randomUUID } from 'crypto'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -9,7 +10,7 @@ type Body = {
   hostName?: string
   color?: string
   codeLength?: number
-  gameMode?: string // reçu mais pas stocké si colonne absente
+  gameMode?: string
 }
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL!
@@ -31,7 +32,6 @@ export async function POST(req: Request) {
     if (!SUPABASE_URL || !SUPABASE_KEY) {
       return NextResponse.json({ error: 'Supabase env vars missing' }, { status: 500 })
     }
-
     const supabase = createClient(SUPABASE_URL, SUPABASE_KEY, { auth: { persistSession: false } })
 
     const ct = req.headers.get('content-type') || ''
@@ -43,7 +43,7 @@ export async function POST(req: Request) {
     const hostName = (body.hostName || 'Host').toString().trim().slice(0, 24) || 'Host'
     const hostColor = body.color || randomColor()
     const codeLen = Math.max(3, Math.min(8, Number(body.codeLength) || 4))
-    // const gameMode = (body.gameMode || 'classic').toString() // si tu as une colonne, tu pourras l’utiliser
+    // const gameMode = (body.gameMode || 'classic').toString() // si tu as une colonne, tu pourras la stocker
 
     // Génère un code unique
     let code = ''
@@ -63,29 +63,30 @@ export async function POST(req: Request) {
       }
     }
 
-    // Crée la room (sans created_at dans le select; PostgREST l’a de toute façon)
-    const { data: roomIns, error: roomErr } = await supabase
+    // Crée la room
+    const { data: room, error: roomErr } = await supabase
       .from('rooms')
-      .insert({ code, status: 'lobby' } /* , game_mode si colonne existe */ as any)
+      .insert({ code, status: 'lobby' } as any)
       .select('id, code, status')
       .maybeSingle()
-
-    if (roomErr) {
-      return NextResponse.json({ error: 'DB error creating room', details: roomErr.message }, { status: 500 })
+    if (roomErr || !room) {
+      return NextResponse.json({ error: 'DB error creating room', details: roomErr?.message }, { status: 500 })
     }
-    const room = roomIns!
 
-    // Crée le host (sans created_at dans le select)
+    // Génère l’ID du host ici pour éviter le NOT NULL
+    const playerId = randomUUID()
+
+    // Crée le host (note: on fournit id nous-mêmes)
     const { data: player, error: playerErr } = await supabase
       .from('players')
-      .insert({ room_id: room.id, name: hostName, color: hostColor, is_host: true })
+      .insert({ id: playerId, room_id: room.id, name: hostName, color: hostColor, is_host: true })
       .select('id, room_id, name, color, is_host')
       .maybeSingle()
 
-    if (playerErr) {
-      // rollback
+    if (playerErr || !player) {
+      // rollback si host KO
       await supabase.from('rooms').delete().eq('id', room.id)
-      return NextResponse.json({ error: 'DB error creating host', details: playerErr.message }, { status: 500 })
+      return NextResponse.json({ error: 'DB error creating host', details: playerErr?.message }, { status: 500 })
     }
 
     return NextResponse.json({ room, player }, { status: 201 })
